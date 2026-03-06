@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>reposview inspector</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="layout">
+      <section class="shell">
+        <header class="topbar">
+          <div>
+            <h1>reposview inspector</h1>
+            <p class="subtitle">catalog, facet, and triage repository clones from your local index</p>
+          </div>
+          <div class="toolbar">
+            <button id="tree-view-toggle" type="button" class="ghost">Expanded trees: off</button>
+            <button id="sync-btn" type="button">Sync now</button>
+            <span id="sync-status">idle</span>
+          </div>
+        </header>
+
+        <div class="content-grid">
+          <aside class="facets">
+            <form id="filters" class="filters">
+              <label class="field">
+                <span>Search</span>
+                <input id="q" name="q" type="text" placeholder="path / origin / branch" />
+              </label>
+            </form>
+
+            <section class="facet-section">
+              <div class="facet-head">
+                <h2>Web Origin Tree</h2>
+              </div>
+              <div id="origin-tree" class="tree-list"></div>
+            </section>
+
+            <section class="facet-section">
+              <div class="facet-head">
+                <h2>Local Path Tree</h2>
+              </div>
+              <div id="path-tree" class="tree-list"></div>
+            </section>
+          </aside>
+
+          <section class="results">
+            <div id="active-filters" class="active-filters"></div>
+            <div id="rows-meta">rows: 0 / matched: 0 / total: 0 (limit 1000)</div>
+            <div id="rows-table"></div>
+          </section>
+        </div>
+      </section>
+    </main>
+
+    <script type="module" src="/main.js"></script>
+  </body>
+</html>

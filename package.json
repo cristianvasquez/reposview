@@ -1,0 +1,21 @@
+{
+  "name": "reposview",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Repository catalog and sync indexer",
+  "type": "module",
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "sync:index": "node scripts/sync-repos.mjs",
+    "inspect": "node scripts/inspect-table.mjs",
+    "dev:api": "node scripts/inspect-table.mjs",
+    "dev:web": "vite --config vite.config.mjs"
+  },
+  "dependencies": {
+    "isomorphic-git": "^1.37.2",
+    "tabulator-tables": "^6.4.0"
+  },
+  "devDependencies": {
+    "vite": "^7.3.1"
+  }
+}
