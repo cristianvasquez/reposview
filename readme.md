@@ -82,6 +82,16 @@ http://127.0.0.1:8790
 
 From the UI, click `Sync now` to run a background index with live progress updates.
 
+## Privacy pre-commit hook
+
+Enable the repository hook path so commits are checked for obvious private strings:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+The hook at `.githooks/pre-commit` blocks commits that contain likely sensitive local paths or personal emails.
+
 Performance note:
 
 - Default scanner mode is `auto`:

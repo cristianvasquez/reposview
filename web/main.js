@@ -87,9 +87,7 @@ function pathToGhosttyHref(pathValue) {
 function pathFormatter(cell) {
   const value = cell.getValue();
   if (!value) return '';
-  const href = pathToGhosttyHref(value);
-  if (!href) return `<code>${esc(value)}</code>`;
-  return `<a class="path-link" href="${esc(href)}"><code>${esc(value)}</code></a>`;
+  return `<button type="button" class="path-open-btn" data-path="${esc(value)}"><code>${esc(value)}</code></button>`;
 }
 
 function originToHref(origin) {
@@ -500,6 +498,27 @@ function applyAuthorClick(event) {
   void refreshRows();
 }
 
+async function applyPathOpenClick(event) {
+  const button = event.target.closest('button.path-open-btn[data-path]');
+  if (!button) return;
+  event.preventDefault();
+
+  const pathValue = button.getAttribute('data-path') || '';
+  try {
+    const res = await fetch('/actions/open-terminal', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ path: pathValue })
+    });
+    if (res.ok) return;
+  } catch {
+    // fallback below
+  }
+
+  const fallbackHref = pathToGhosttyHref(pathValue);
+  if (fallbackHref) window.location.assign(fallbackHref);
+}
+
 async function fetchRows() {
   const state = stateFromUrl();
   const params = new URLSearchParams();
@@ -648,6 +667,7 @@ async function init() {
   originTree.addEventListener('keydown', applyTreeKeyboard);
   treeViewToggleBtn.addEventListener('click', toggleTreeViewMode);
   activeFilters.addEventListener('click', applyChipClear);
+  rowsTable.addEventListener('click', applyPathOpenClick);
   rowsTable.addEventListener('click', applyAuthorClick);
   rowsTable.addEventListener('keydown', (event) => {
     if (event.key === 'Tab' && event.shiftKey) {

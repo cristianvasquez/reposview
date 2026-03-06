@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Skip allowlisted files.
+allowlisted() {
+  local file="$1"
+  [[ "$file" =~ ^readme\.md$ ]] || [[ "$file" =~ ^\.githooks/pre-commit$ ]]
+}
+
+mapfile -t files < <(git diff --cached --name-only --diff-filter=ACMR)
+[[ ${#files[@]} -eq 0 ]] && exit 0
+
+fail=0
+
+for file in "${files[@]}"; do
+  allowlisted "$file" && continue
+
+  content="$(git show ":$file" 2>/dev/null || true)"
+  [[ -z "$content" ]] && continue
+
+  if grep -E -q '/home/[A-Za-z0-9._-]+' <<<"$content"; then
+    echo "[privacy] $file contains absolute home paths (/home/<user>)"
+    fail=1
+  fi
+
+  if grep -E -qi '[A-Za-z0-9._%+-]+@gmail\.com' <<<"$content"; then
+    echo "[privacy] $file contains gmail address"
+    fail=1
+  fi
+
+  if grep -E -qi '[A-Za-z0-9._%+-]+@users\.noreply\.github\.com' <<<"$content"; then
+    echo "[privacy] $file contains github noreply address"
+    fail=1
+  fi
+
+  if grep -E -qi '\bcvasquez\b' <<<"$content"; then
+    echo "[privacy] $file contains private local handle (cvasquez)"
+    fail=1
+  fi
+done
+
+if [[ "$fail" -ne 0 ]]; then
+  echo
+  echo "Commit blocked by privacy pre-commit hook."
+  echo "If intentional, edit .githooks/pre-commit allowlist/patterns."
+  exit 1
+fi

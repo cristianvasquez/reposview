@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 
 import { createServer } from 'node:http';
+import fs from 'node:fs';
 import path from 'node:path';
+import { spawn, spawnSync } from 'node:child_process';
 import { DatabaseSync } from 'node:sqlite';
 import { DEFAULT_SYNC_OPTIONS, runSync } from './sync-core.mjs';
 
@@ -79,6 +81,42 @@ function esc(value) {
 function qParam(url, key, fallback = '') {
   const value = url.searchParams.get(key);
   return value === null ? fallback : value;
+}
+
+function commandExists(cmd) {
+  const out = spawnSync('bash', ['-lc', `command -v ${cmd}`], { encoding: 'utf8' });
+  return out.status === 0;
+}
+
+function launchTerminalAtDir(dirPath) {
+  const candidates = [
+    ['ghostty', [`--working-directory=${dirPath}`, '--gtk-single-instance=false']],
+    ['gnome-terminal', [`--working-directory=${dirPath}`]]
+  ];
+
+  for (const [cmd, args] of candidates) {
+    if (!commandExists(cmd)) continue;
+    const child = spawn(cmd, args, { detached: true, stdio: 'ignore', cwd: dirPath });
+    child.unref();
+    return { ok: true, command: cmd };
+  }
+
+  return { ok: false, error: 'no supported terminal command found' };
+}
+
+async function readJsonBody(req, maxBytes = 64 * 1024) {
+  const chunks = [];
+  let total = 0;
+  for await (const chunk of req) {
+    const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    total += buf.length;
+    if (total > maxBytes) {
+      throw new Error('request body too large');
+    }
+    chunks.push(buf);
+  }
+  if (chunks.length === 0) return {};
+  return JSON.parse(Buffer.concat(chunks).toString('utf8'));
 }
 
 function stateFromQuery(url) {
@@ -804,6 +842,31 @@ async function main() {
       res.statusCode = 200;
       res.setHeader('Content-Type', 'application/json; charset=utf-8');
       res.end(JSON.stringify({ rows: data.rows, totalCount: data.totalCount, databaseTotal: data.databaseTotal, facets: data.facets }));
+      return;
+    }
+
+    if (url.pathname === '/actions/open-terminal') {
+      if (req.method !== 'POST') {
+        res.statusCode = 405;
+        res.end('method not allowed');
+        return;
+      }
+
+      const body = await readJsonBody(req);
+      const rawPath = String(body?.path || '').trim();
+      const resolved = path.resolve(rawPath);
+
+      if (!rawPath || !path.isAbsolute(resolved) || !fs.existsSync(resolved) || !fs.statSync(resolved).isDirectory()) {
+        res.statusCode = 400;
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        res.end(JSON.stringify({ opened: false, error: 'invalid path' }));
+        return;
+      }
+
+      const launched = launchTerminalAtDir(resolved);
+      res.statusCode = launched.ok ? 200 : 500;
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.end(JSON.stringify({ opened: launched.ok, path: resolved, ...launched }));
       return;
     }
 
