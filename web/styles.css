@@ -436,43 +436,8 @@ code {
   text-decoration: underline;
 }
 
-.path-link {
-  color: #1d2127;
-  text-decoration: none;
-}
-
-.path-link:hover {
-  text-decoration: underline;
-}
-
-.path-open-btn {
-  border: 0;
-  background: transparent;
-  color: #1d2127;
-  padding: 0;
-  border-radius: 0;
-  text-align: left;
-  cursor: pointer;
-}
-
-.path-open-btn:hover {
-  text-decoration: underline;
-}
-
-.author-filter-btn {
-  border: 0;
-  background: transparent;
-  color: #1d2127;
-  padding: 0;
-  border-radius: 0;
-  text-align: left;
-  cursor: pointer;
-}
-
-.author-filter-btn:hover {
-  text-decoration: underline;
-}
-
+.path-open-btn,
+.author-filter-btn,
 .reindex-btn {
   border: 0;
   background: transparent;
@@ -483,6 +448,8 @@ code {
   cursor: pointer;
 }
 
+.path-open-btn:hover,
+.author-filter-btn:hover,
 .reindex-btn:hover {
   text-decoration: underline;
 }

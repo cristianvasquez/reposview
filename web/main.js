@@ -233,30 +233,22 @@ function detailsValue(value, { code = false } = {}) {
   return esc(text);
 }
 
+function buildRowCard(row) {
+  return `<div class="repo-row-card">
+    <div class="repo-row-item"><span class="repo-row-key">path</span><span class="repo-row-val"><button type="button" class="path-open-btn" data-path="${esc(row.path || '')}"><code>${esc(row.path || '')}</code></button></span></div>
+    <div class="repo-row-item"><span class="repo-row-key">origin</span><span class="repo-row-val">${originFormatter({ getValue: () => row.origin })}</span></div>
+    <div class="repo-row-item"><span class="repo-row-key">branch</span><span class="repo-row-val">${detailsValue(row.branch, { code: true })}</span></div>
+    <div class="repo-row-item"><span class="repo-row-key">last author</span><span class="repo-row-val">${authorFormatter({ getValue: () => row.last_commit_author })}</span></div>
+    <div class="repo-row-item"><span class="repo-row-key">last commit</span><span class="repo-row-val">${detailsValue(row.last_commit_at)}</span></div>
+    <div class="repo-row-item"><span class="repo-row-key">last seen</span><span class="repo-row-val">${detailsValue(row.last_seen_at)}</span></div>
+  </div>`;
+}
+
 function renderRepoDetailsLoading(row) {
   if (!repoDetails) return;
   repoDetails.classList.remove('is-hidden');
   repoDetails.innerHTML = `<h3>Repository details</h3>
-    <div class="repo-row-card">
-      <div class="repo-row-item"><span class="repo-row-key">path</span><span class="repo-row-val"><button type="button" class="path-open-btn" data-path="${esc(
-        row.path || ''
-      )}"><code>${esc(row.path || '')}</code></button></span></div>
-      <div class="repo-row-item"><span class="repo-row-key">origin</span><span class="repo-row-val">${originFormatter({
-        getValue: () => row.origin
-      })}</span></div>
-      <div class="repo-row-item"><span class="repo-row-key">branch</span><span class="repo-row-val">${detailsValue(row.branch, {
-        code: true
-      })}</span></div>
-      <div class="repo-row-item"><span class="repo-row-key">last author</span><span class="repo-row-val">${authorFormatter({
-        getValue: () => row.last_commit_author
-      })}</span></div>
-      <div class="repo-row-item"><span class="repo-row-key">last commit</span><span class="repo-row-val">${detailsValue(
-        row.last_commit_at
-      )}</span></div>
-      <div class="repo-row-item"><span class="repo-row-key">last seen</span><span class="repo-row-val">${detailsValue(
-        row.last_seen_at
-      )}</span></div>
-    </div>
+    ${buildRowCard(row)}
     <div class="repo-details-empty">loading README...</div>`;
 }
 
@@ -272,26 +264,7 @@ function renderRepoDetails(row, payload) {
 
   repoDetails.classList.remove('is-hidden');
   repoDetails.innerHTML = `<h3>Repository details</h3>
-    <div class="repo-row-card">
-      <div class="repo-row-item"><span class="repo-row-key">path</span><span class="repo-row-val"><button type="button" class="path-open-btn" data-path="${esc(
-        row.path || ''
-      )}"><code>${esc(row.path || '')}</code></button></span></div>
-      <div class="repo-row-item"><span class="repo-row-key">origin</span><span class="repo-row-val">${originFormatter({
-        getValue: () => row.origin
-      })}</span></div>
-      <div class="repo-row-item"><span class="repo-row-key">branch</span><span class="repo-row-val">${detailsValue(row.branch, {
-        code: true
-      })}</span></div>
-      <div class="repo-row-item"><span class="repo-row-key">last author</span><span class="repo-row-val">${authorFormatter({
-        getValue: () => row.last_commit_author
-      })}</span></div>
-      <div class="repo-row-item"><span class="repo-row-key">last commit</span><span class="repo-row-val">${detailsValue(
-        row.last_commit_at
-      )}</span></div>
-      <div class="repo-row-item"><span class="repo-row-key">last seen</span><span class="repo-row-val">${detailsValue(
-        row.last_seen_at
-      )}</span></div>
-    </div>
+    ${buildRowCard(row)}
     ${readmeBody}`;
 }
 
@@ -321,11 +294,6 @@ async function refreshRepoDetails(rows) {
     repoDetails.innerHTML = `<h3>Repository details</h3>
       <div class="repo-details-empty">${esc(error instanceof Error ? error.message : String(error))}</div>`;
   }
-}
-
-function renderBranchOptions(options, selectedValue) {
-  void options;
-  void selectedValue;
 }
 
 function sortTreeNodes(nodes) {
@@ -446,7 +414,6 @@ function renderActiveFilters(state) {
 
 function renderFacets(facets, state) {
   lastFacets = facets || {};
-  renderBranchOptions(facets?.branch || [], state.branch);
   renderTree(pathTree, facets?.localPathTree || [], state.pathPrefix, 'path');
   renderTree(originTree, facets?.originTree || [], state.originPrefix, 'origin');
   renderActiveFilters(state);

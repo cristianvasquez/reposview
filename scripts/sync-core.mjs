@@ -69,7 +69,7 @@ export function printSyncHelp() {
   process.stdout.write('  --verbose               Print skip reasons\n');
 }
 
-function commandExists(cmd) {
+export function commandExists(cmd) {
   const out = spawnSync('bash', ['-lc', `command -v ${cmd}`], { encoding: 'utf8' });
   return out.status === 0;
 }
@@ -160,6 +160,40 @@ function discoverGitDirs(roots, exclude, scannerMode, onProgress) {
   return discoverWithNodeWalk(roots, exclude, onProgress);
 }
 
+async function getRootHash(ctx, headOid) {
+  if (!headOid) return null;
+
+  const seen = new Set();
+  const queue = [headOid];
+  const roots = [];
+
+  while (queue.length > 0) {
+    const oid = queue.shift();
+    if (seen.has(oid)) continue;
+    seen.add(oid);
+
+    let commit;
+    try {
+      commit = await git.readCommit({ ...ctx, oid });
+    } catch {
+      continue;
+    }
+
+    const parents = commit.commit.parent || [];
+    if (parents.length === 0) {
+      roots.push(oid);
+    } else {
+      for (const p of parents) {
+        if (!seen.has(p)) queue.push(p);
+      }
+    }
+  }
+
+  if (roots.length === 0) return null;
+  roots.sort();
+  return roots.join(' + ');
+}
+
 function toRepoInfoFromGitDir(gitDir) {
   const normalizedGitDir = gitDir.replace(/\/+$/, '');
   const base = path.basename(normalizedGitDir);
@@ -234,13 +268,10 @@ async function getRepoMetadata(repo, verbose = false) {
     branch = null;
   }
 
-  // Fast identifier rule:
-  // 1) origin URL if available
-  // 2) HEAD commit hash
-  // 3) local:empty for repos without commits
   let lineage = origin;
   if (!lineage) {
-    lineage = headOid || 'local:empty';
+    const rootHash = await getRootHash(repo.ctx, headOid);
+    lineage = rootHash ? `local:${rootHash}` : 'local:empty';
   }
 
   let lastCommitAuthor = null;

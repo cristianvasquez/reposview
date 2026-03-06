@@ -3,9 +3,9 @@
 import { createServer } from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawn, spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { DatabaseSync } from 'node:sqlite';
-import { DEFAULT_SYNC_OPTIONS, runSync, reindexRepositoryByPath, deleteRepositoryByPath } from './sync-core.mjs';
+import { DEFAULT_SYNC_OPTIONS, commandExists, runSync, reindexRepositoryByPath, deleteRepositoryByPath } from './sync-core.mjs';
 
 function parseArgs(argv) {
   const opts = {
@@ -70,22 +70,9 @@ function printHelp() {
   process.stdout.write('  --port <port>           Bind port (default: 8787)\n');
 }
 
-function esc(value) {
-  return String(value)
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;');
-}
-
 function qParam(url, key, fallback = '') {
   const value = url.searchParams.get(key);
   return value === null ? fallback : value;
-}
-
-function commandExists(cmd) {
-  const out = spawnSync('bash', ['-lc', `command -v ${cmd}`], { encoding: 'utf8' });
-  return out.status === 0;
 }
 
 function launchTerminalAtDir(dirPath) {
@@ -327,23 +314,6 @@ function buildWhereClause(filters, options = {}) {
   };
 }
 
-function buildQuery(filters) {
-  const { sort, dir } = filters;
-  const validSort = new Set(['path', 'origin', 'branch', 'last_commit_author', 'last_commit_at', 'last_seen_at']);
-  const safeSort = validSort.has(sort) ? sort : 'path';
-  const safeDir = dir === 'desc' ? 'DESC' : 'ASC';
-  const { whereSql, params } = buildWhereClause(filters);
-  const sql = `
-SELECT path, origin, branch, lineage, last_commit_author, last_commit_at, is_bare, first_seen_at, last_seen_at
-FROM repositories
-${whereSql}
-ORDER BY ${safeSort} ${safeDir}
-LIMIT 1000;
-`;
-
-  return { sql, params, safeSort, safeDir };
-}
-
 function aggregateFacetCounts(values) {
   const counts = new Map();
   for (const value of values) {
@@ -436,9 +406,6 @@ ${whereSql};
   if (!options.ignoreOriginPrefix && filters.originPrefix) {
     rows = rows.filter((row) => originHasPrefix(row, filters.originPrefix));
   }
-  if (!options.ignorePathPrefix && filters.pathPrefix) {
-    rows = rows.filter((row) => pathHasPrefix(row.path, filters.pathPrefix));
-  }
   return rows;
 }
 
@@ -466,9 +433,11 @@ function readRows(dbPath, filters) {
   const db = new DatabaseSync(dbPath, { readOnly: true });
   try {
     const dbTotalStmt = db.prepare('SELECT count(*) as c FROM repositories;');
-    const query = buildQuery(filters);
+    const validSort = new Set(['path', 'origin', 'branch', 'last_commit_author', 'last_commit_at', 'last_seen_at']);
+    const safeSort = validSort.has(filters.sort) ? filters.sort : 'path';
+    const safeDir = filters.dir === 'desc' ? 'DESC' : 'ASC';
     const matchedRows = fetchRowsForFilterSet(db, filters);
-    sortRows(matchedRows, query.safeSort, query.safeDir);
+    sortRows(matchedRows, safeSort, safeDir);
 
     const rows = matchedRows.slice(0, 1000).map((row) => ({ ...row, origin: originDisplay(row) }));
     const totalCount = matchedRows.length;
@@ -490,281 +459,10 @@ function readRows(dbPath, filters) {
       originTree: buildOriginTreeFacet(originTreeRows)
     };
 
-    return { rows, totalCount, databaseTotal, query, facets };
+    return { rows, totalCount, databaseTotal, facets };
   } finally {
     db.close();
   }
-}
-
-function renderPage({ rows, totalCount, q, sort, dir, syncState }) {
-  const oppositeDir = dir === 'asc' ? 'desc' : 'asc';
-
-  const links = ['path', 'origin', 'branch', 'last_commit_author', 'last_commit_at', 'last_seen_at']
-    .map((key) => {
-      const href = `/?q=${encodeURIComponent(q)}&sort=${encodeURIComponent(key)}&dir=${encodeURIComponent(
-        sort === key ? oppositeDir : 'asc'
-      )}`;
-      const marker = sort === key ? (dir === 'asc' ? ' ▲' : ' ▼') : '';
-      return `<a href="${href}">${esc(key)}${marker}</a>`;
-    })
-    .join(' | ');
-
-  let statusText = 'idle';
-  if (syncState.running) {
-    statusText = `${syncState.phase || 'sync'}: ${syncState.message || 'working'}${
-      syncState.processedGitDirs ? ` (${syncState.processedGitDirs}/${syncState.discoveredGitDirs || '?'})` : ''
-    }`;
-  } else if (syncState.error) {
-    statusText = `error: ${syncState.error}`;
-  } else if (syncState.lastRunAt) {
-    statusText = `last sync ${syncState.lastRunAt} using ${syncState.scanner || 'unknown'} indexed ${syncState.lastIndexed || 0} repos in ${syncState.durationMs || 0}ms`;
-  }
-
-  const body = rows
-    .map((r) => {
-      return `<tr>
-<td><code>${esc(r.path)}</code></td>
-<td>${r.origin ? `<code>${esc(r.origin)}</code>` : ''}</td>
-<td>${r.branch ? `<code>${esc(r.branch)}</code>` : ''}</td>
-<td>${r.last_commit_author ? `<code>${esc(r.last_commit_author)}</code>` : ''}</td>
-<td>${esc(r.last_commit_at || '')}</td>
-<td>${esc(r.last_seen_at || '')}</td>
-</tr>`;
-    })
-    .join('\n');
-
-  return `<!doctype html>
-<html>
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>reposview inspector</title>
-  <style>
-    :root { color-scheme: light; }
-    body { font-family: ui-sans-serif, -apple-system, Segoe UI, Helvetica, Arial, sans-serif; margin: 1rem; }
-    h1 { margin: 0 0 0.75rem; }
-    form { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 0.75rem; }
-    input[type="text"] { min-width: 28rem; max-width: 100%; padding: 0.35rem; }
-    table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
-    th, td { border: 1px solid #ddd; padding: 0.4rem; vertical-align: top; text-align: left; }
-    tr:nth-child(even) { background: #fafafa; }
-    code { white-space: nowrap; }
-    .meta { margin: 0.5rem 0; color: #333; }
-    .links { margin-bottom: 0.5rem; }
-    .toolbar { display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.4rem; }
-    .sync-btn { padding: 0.4rem 0.65rem; border: 1px solid #222; background: #fff; color: #111; text-decoration: none; }
-    .sync-btn[disabled] { opacity: 0.55; pointer-events: none; }
-    #sync-status { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-  </style>
-</head>
-<body>
-  <h1>reposview inspector</h1>
-  <div class="toolbar">
-    <button id="sync-btn" class="sync-btn" type="button" ${syncState.running ? 'disabled' : ''}>Sync now</button>
-    <span id="sync-status">${esc(statusText)}</span>
-  </div>
-  <form method="get" action="/">
-    <input type="text" name="q" value="${esc(q)}" placeholder="search path/origin/branch/last-author" />
-    <input type="hidden" name="sort" value="${esc(sort)}" />
-    <input type="hidden" name="dir" value="${esc(dir)}" />
-    <button type="submit">Filter</button>
-  </form>
-  <div id="rows-meta" class="meta">rows: ${rows.length} / total: ${totalCount} (limit 1000)</div>
-  <div class="links">sort: ${links}</div>
-  <table>
-    <thead>
-      <tr>
-        <th>path</th>
-        <th>origin</th>
-        <th>branch</th>
-        <th>last_commit_author</th>
-        <th>last_commit_at</th>
-        <th>last_seen_at</th>
-      </tr>
-    </thead>
-    <tbody id="rows-body">
-      ${body}
-    </tbody>
-  </table>
-  <script>
-    const syncBtn = document.getElementById('sync-btn');
-    const syncStatus = document.getElementById('sync-status');
-    const rowsBody = document.getElementById('rows-body');
-    const rowsMeta = document.getElementById('rows-meta');
-    let lastRunAt = ${JSON.stringify(syncState.lastRunAt || null)};
-    let pollTimer = null;
-    let rowsTimer = null;
-
-    function escHtml(value) {
-      return String(value)
-        .replaceAll('&', '&amp;')
-        .replaceAll('<', '&lt;')
-        .replaceAll('>', '&gt;')
-        .replaceAll('"', '&quot;');
-    }
-
-    function renderRows(rows, totalCount) {
-      if (!rowsBody || !rowsMeta) return;
-      rowsMeta.textContent = 'rows: ' + rows.length + ' / total: ' + totalCount + ' (limit 1000)';
-
-      rowsBody.innerHTML = rows.map((r) => {
-        const origin = r.origin ? '<code>' + escHtml(r.origin) + '</code>' : '';
-        const branch = r.branch ? '<code>' + escHtml(r.branch) + '</code>' : '';
-        const lastCommitAuthor = r.last_commit_author ? '<code>' + escHtml(r.last_commit_author) + '</code>' : '';
-        const lastCommitAt = escHtml(r.last_commit_at || '');
-        const path = '<code>' + escHtml(r.path) + '</code>';
-        const lastSeen = escHtml(r.last_seen_at || '');
-        return '<tr>' +
-          '<td>' + path + '</td>' +
-          '<td>' + origin + '</td>' +
-          '<td>' + branch + '</td>' +
-          '<td>' + lastCommitAuthor + '</td>' +
-          '<td>' + lastCommitAt + '</td>' +
-          '<td>' + lastSeen + '</td>' +
-          '</tr>';
-      }).join('');
-    }
-
-    function renderStatus(state) {
-      if (state.running) {
-        const progress = ' (' + (state.processedGitDirs || 0) + '/' + (state.discoveredGitDirs || '?') + ')';
-        const persisted = state.persistedRepos ? ' saved=' + state.persistedRepos : '';
-        syncStatus.textContent = (state.phase || 'sync') + ': ' + (state.message || 'working') + progress;
-        syncStatus.textContent += persisted;
-        syncBtn.disabled = true;
-        return;
-      }
-
-      if (state.error) {
-        syncStatus.textContent = 'error: ' + state.error;
-        syncBtn.disabled = false;
-        return;
-      }
-
-      if (state.lastRunAt) {
-        syncStatus.textContent = 'last sync ' + state.lastRunAt + ' using ' + (state.scanner || 'unknown') + ' indexed ' + (state.lastIndexed || 0) + ' repos in ' + (state.durationMs || 0) + 'ms';
-      } else {
-        syncStatus.textContent = 'idle';
-      }
-      syncBtn.disabled = false;
-    }
-
-    async function fetchStatus() {
-      try {
-        const res = await fetch('/sync-status');
-        if (!res.ok) return null;
-        return await res.json();
-      } catch {
-        return null;
-      }
-    }
-
-    function currentRowsUrl() {
-      const params = new URLSearchParams(window.location.search);
-      return '/rows?' + params.toString();
-    }
-
-    async function fetchRows() {
-      try {
-        const res = await fetch(currentRowsUrl());
-        if (!res.ok) return null;
-        return await res.json();
-      } catch {
-        return null;
-      }
-    }
-
-    function startRowsPolling() {
-      if (rowsTimer) return;
-      rowsTimer = setInterval(async () => {
-        const data = await fetchRows();
-        if (!data) return;
-        renderRows(data.rows || [], data.totalCount || 0);
-      }, 1000);
-    }
-
-    function stopRowsPolling() {
-      if (!rowsTimer) return;
-      clearInterval(rowsTimer);
-      rowsTimer = null;
-    }
-
-    function startPolling() {
-      if (pollTimer) return;
-      pollTimer = setInterval(async () => {
-        const state = await fetchStatus();
-        if (!state) return;
-        renderStatus(state);
-        if (state.running) {
-          startRowsPolling();
-        } else {
-          stopRowsPolling();
-        }
-        if (!state.running && state.lastRunAt && state.lastRunAt !== lastRunAt) {
-          lastRunAt = state.lastRunAt;
-          const data = await fetchRows();
-          if (data) {
-            renderRows(data.rows || [], data.totalCount || 0);
-          } else {
-            setTimeout(() => window.location.reload(), 250);
-          }
-        }
-      }, 1000);
-    }
-
-    async function triggerSync() {
-      if (!syncBtn || syncBtn.disabled) return;
-      syncBtn.disabled = true;
-      syncStatus.textContent = 'starting sync...';
-      try {
-        const res = await fetch('/sync', { method: 'POST' });
-        if (!res.ok) {
-          syncStatus.textContent = 'failed to start sync';
-          syncBtn.disabled = false;
-          return;
-        }
-        syncStatus.textContent = 'sync requested...';
-        startPolling();
-      } catch {
-        syncStatus.textContent = 'failed to start sync';
-        syncBtn.disabled = false;
-      }
-    }
-
-    if (syncBtn) syncBtn.addEventListener('click', triggerSync);
-
-    const stream = new EventSource('/events');
-    stream.onmessage = (event) => {
-      try {
-        const state = JSON.parse(event.data);
-        renderStatus(state);
-        if (state.running) {
-          startRowsPolling();
-        } else {
-          stopRowsPolling();
-        }
-        if (state.lastRunAt && state.lastRunAt !== lastRunAt) {
-          lastRunAt = state.lastRunAt;
-          fetchRows().then((data) => {
-            if (data) {
-              renderRows(data.rows || [], data.totalCount || 0);
-            } else {
-              setTimeout(() => window.location.reload(), 250);
-            }
-          });
-        }
-      } catch {
-        // Ignore parse errors.
-      }
-    };
-
-    stream.onerror = () => {
-      syncStatus.textContent = 'status stream disconnected';
-      startPolling();
-    };
-  </script>
-</body>
-</html>`;
 }
 
 async function main() {
@@ -1012,27 +710,9 @@ async function main() {
       return;
     }
 
-    if (url.pathname !== '/') {
-      res.statusCode = 404;
-      res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-      res.end('not found');
-      return;
-    }
-
-    const filters = filtersFromUrl(url);
-    const data = readRows(dbPath, filters);
-    const html = renderPage({
-      rows: data.rows,
-      totalCount: data.totalCount,
-      q: filters.q,
-      sort: data.query.safeSort,
-      dir: data.query.safeDir.toLowerCase(),
-      syncState
-    });
-
-    res.statusCode = 200;
-    res.setHeader('Content-Type', 'text/html; charset=utf-8');
-    res.end(html);
+    res.statusCode = 404;
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    res.end('not found');
   }
 
   server.listen(opts.port, opts.host, () => {
