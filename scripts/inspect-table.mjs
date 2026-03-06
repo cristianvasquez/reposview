@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { DatabaseSync } from 'node:sqlite';
-import { DEFAULT_SYNC_OPTIONS, runSync } from './sync-core.mjs';
+import { DEFAULT_SYNC_OPTIONS, runSync, reindexRepositoryByPath, deleteRepositoryByPath } from './sync-core.mjs';
 
 function parseArgs(argv) {
   const opts = {
@@ -89,9 +89,13 @@ function commandExists(cmd) {
 }
 
 function launchTerminalAtDir(dirPath) {
+  if (!commandExists('yazi')) {
+    return { ok: false, error: 'yazi command not found' };
+  }
+
   const candidates = [
-    ['ghostty', [`--working-directory=${dirPath}`, '--gtk-single-instance=false']],
-    ['gnome-terminal', [`--working-directory=${dirPath}`]]
+    ['ghostty', [`--working-directory=${dirPath}`, '--gtk-single-instance=false', '-e', 'yazi', dirPath]],
+    ['gnome-terminal', [`--working-directory=${dirPath}`, '--', 'yazi', dirPath]]
   ];
 
   for (const [cmd, args] of candidates) {
@@ -119,15 +123,6 @@ async function readJsonBody(req, maxBytes = 64 * 1024) {
   return JSON.parse(Buffer.concat(chunks).toString('utf8'));
 }
 
-function stateFromQuery(url) {
-  const explicitState = qParam(url, 'state', '').toLowerCase();
-  if (explicitState === 'active' || explicitState === 'missing' || explicitState === 'all') {
-    return explicitState;
-  }
-
-  return qParam(url, 'missing', '') === '1' ? 'all' : 'active';
-}
-
 function bareFromQuery(url) {
   const value = qParam(url, 'bare', '').toLowerCase();
   if (value === 'bare' || value === 'nonbare') return value;
@@ -139,7 +134,6 @@ function filtersFromUrl(url) {
     q: qParam(url, 'q', ''),
     sort: qParam(url, 'sort', 'path'),
     dir: qParam(url, 'dir', 'asc').toLowerCase() === 'desc' ? 'desc' : 'asc',
-    state: stateFromQuery(url),
     bare: bareFromQuery(url),
     origin: qParam(url, 'origin', ''),
     branch: qParam(url, 'branch', ''),
@@ -218,11 +212,6 @@ function buildWhereClause(filters, options = {}) {
   const whereParts = [];
   const params = [];
 
-  if (!options.ignoreState) {
-    if (filters.state === 'active') whereParts.push('missing_at IS NULL');
-    else if (filters.state === 'missing') whereParts.push('missing_at IS NOT NULL');
-  }
-
   if (!options.ignoreBare) {
     if (filters.bare === 'bare') whereParts.push('is_bare = 1');
     else if (filters.bare === 'nonbare') whereParts.push('is_bare = 0');
@@ -256,12 +245,12 @@ function buildWhereClause(filters, options = {}) {
 
 function buildQuery(filters) {
   const { sort, dir } = filters;
-  const validSort = new Set(['path', 'origin', 'branch', 'last_commit_author', 'last_seen_at', 'missing_at']);
+  const validSort = new Set(['path', 'origin', 'branch', 'last_commit_author', 'last_seen_at']);
   const safeSort = validSort.has(sort) ? sort : 'path';
   const safeDir = dir === 'desc' ? 'DESC' : 'ASC';
   const { whereSql, params } = buildWhereClause(filters);
   const sql = `
-SELECT path, origin, branch, lineage, last_commit_author, is_bare, first_seen_at, last_seen_at, missing_at
+SELECT path, origin, branch, lineage, last_commit_author, is_bare, first_seen_at, last_seen_at
 FROM repositories
 ${whereSql}
 ORDER BY ${safeSort} ${safeDir}
@@ -355,7 +344,7 @@ function buildOriginTreeFacet(rows) {
 function fetchRowsForFilterSet(db, filters, options = {}) {
   const { whereSql, params } = buildWhereClause(filters, options);
   const sql = `
-SELECT path, origin, branch, lineage, last_commit_author, is_bare, first_seen_at, last_seen_at, missing_at
+SELECT path, origin, branch, lineage, last_commit_author, is_bare, first_seen_at, last_seen_at
 FROM repositories
 ${whereSql};
 `;
@@ -401,18 +390,12 @@ function readRows(dbPath, filters) {
     const totalCount = matchedRows.length;
     const databaseTotal = dbTotalStmt.get().c;
 
-    const stateFacetRows = fetchRowsForFilterSet(db, filters, { ignoreState: true });
     const bareFacetRows = fetchRowsForFilterSet(db, filters, { ignoreBare: true });
     const branchFacetRows = fetchRowsForFilterSet(db, filters, { ignoreBranch: true });
     const localPathTreeRows = fetchRowsForFilterSet(db, filters, { ignorePathPrefix: true });
     const originTreeRows = fetchRowsForFilterSet(db, filters, { ignoreOriginPrefix: true });
 
     const facets = {
-      state: aggregateBinaryFacet(
-        stateFacetRows,
-        (row) => (row.missing_at ? 'missing' : 'active'),
-        { active: 'active', missing: 'missing' }
-      ),
       bare: aggregateBinaryFacet(
         bareFacetRows,
         (row) => (row.is_bare ? 'bare' : 'nonbare'),
@@ -429,14 +412,14 @@ function readRows(dbPath, filters) {
   }
 }
 
-function renderPage({ rows, totalCount, q, sort, dir, includeMissing, syncState }) {
+function renderPage({ rows, totalCount, q, sort, dir, syncState }) {
   const oppositeDir = dir === 'asc' ? 'desc' : 'asc';
 
-  const links = ['path', 'origin', 'branch', 'last_commit_author', 'last_seen_at', 'missing_at']
+  const links = ['path', 'origin', 'branch', 'last_commit_author', 'last_seen_at']
     .map((key) => {
       const href = `/?q=${encodeURIComponent(q)}&sort=${encodeURIComponent(key)}&dir=${encodeURIComponent(
         sort === key ? oppositeDir : 'asc'
-      )}${includeMissing ? '&missing=1' : ''}`;
+      )}`;
       const marker = sort === key ? (dir === 'asc' ? ' ▲' : ' ▼') : '';
       return `<a href="${href}">${esc(key)}${marker}</a>`;
     })
@@ -461,7 +444,6 @@ function renderPage({ rows, totalCount, q, sort, dir, includeMissing, syncState 
 <td>${r.branch ? `<code>${esc(r.branch)}</code>` : ''}</td>
 <td>${r.last_commit_author ? `<code>${esc(r.last_commit_author)}</code>` : ''}</td>
 <td>${esc(r.last_seen_at || '')}</td>
-<td>${esc(r.missing_at || '')}</td>
 </tr>`;
     })
     .join('\n');
@@ -500,7 +482,6 @@ function renderPage({ rows, totalCount, q, sort, dir, includeMissing, syncState 
     <input type="text" name="q" value="${esc(q)}" placeholder="search path/origin/branch/last-author" />
     <input type="hidden" name="sort" value="${esc(sort)}" />
     <input type="hidden" name="dir" value="${esc(dir)}" />
-    <label><input type="checkbox" name="missing" value="1" ${includeMissing ? 'checked' : ''}/> show missing</label>
     <button type="submit">Filter</button>
   </form>
   <div id="rows-meta" class="meta">rows: ${rows.length} / total: ${totalCount} (limit 1000)</div>
@@ -513,7 +494,6 @@ function renderPage({ rows, totalCount, q, sort, dir, includeMissing, syncState 
         <th>branch</th>
         <th>last_commit_author</th>
         <th>last_seen_at</th>
-        <th>missing_at</th>
       </tr>
     </thead>
     <tbody id="rows-body">
@@ -547,14 +527,12 @@ function renderPage({ rows, totalCount, q, sort, dir, includeMissing, syncState 
         const lastCommitAuthor = r.last_commit_author ? '<code>' + escHtml(r.last_commit_author) + '</code>' : '';
         const path = '<code>' + escHtml(r.path) + '</code>';
         const lastSeen = escHtml(r.last_seen_at || '');
-        const missingAt = escHtml(r.missing_at || '');
         return '<tr>' +
           '<td>' + path + '</td>' +
           '<td>' + origin + '</td>' +
           '<td>' + branch + '</td>' +
           '<td>' + lastCommitAuthor + '</td>' +
           '<td>' + lastSeen + '</td>' +
-          '<td>' + missingAt + '</td>' +
           '</tr>';
       }).join('');
     }
@@ -870,6 +848,52 @@ async function main() {
       return;
     }
 
+    if (url.pathname === '/actions/reindex-repo') {
+      if (req.method !== 'POST') {
+        res.statusCode = 405;
+        res.end('method not allowed');
+        return;
+      }
+
+      const body = await readJsonBody(req);
+      const rawPath = String(body?.path || '').trim();
+      const resolved = path.resolve(rawPath);
+
+      if (!rawPath || !path.isAbsolute(resolved)) {
+        res.statusCode = 400;
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        res.end(JSON.stringify({ reindexed: false, error: 'invalid path' }));
+        return;
+      }
+
+      if (!fs.existsSync(resolved)) {
+        const deleted = await deleteRepositoryByPath(dbPath, resolved);
+        res.statusCode = deleted.deleted ? 200 : 404;
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        res.end(JSON.stringify({ reindexed: false, deleted: deleted.deleted, ...deleted }));
+        return;
+      }
+
+      if (!fs.statSync(resolved).isDirectory()) {
+        res.statusCode = 400;
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        res.end(JSON.stringify({ reindexed: false, error: 'path is not a directory' }));
+        return;
+      }
+
+      try {
+        const row = await reindexRepositoryByPath(dbPath, resolved);
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        res.end(JSON.stringify({ reindexed: true, row }));
+      } catch (error) {
+        res.statusCode = 500;
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        res.end(JSON.stringify({ reindexed: false, error: error instanceof Error ? error.message : String(error) }));
+      }
+      return;
+    }
+
     if (url.pathname === '/sync') {
       if (req.method === 'POST' || req.method === 'GET') {
         const started = await startSync();
@@ -899,7 +923,6 @@ async function main() {
       q: filters.q,
       sort: data.query.safeSort,
       dir: data.query.safeDir.toLowerCase(),
-      includeMissing: filters.state !== 'active',
       syncState
     });
 

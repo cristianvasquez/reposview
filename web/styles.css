@@ -98,7 +98,7 @@ button.ghost {
 
 .content-grid {
   display: grid;
-  grid-template-columns: minmax(16rem, 21rem) 1fr;
+  grid-template-columns: minmax(24rem, 34rem) 1fr;
   gap: 1rem;
   padding: 1rem;
 }
@@ -170,19 +170,12 @@ button.ghost {
   border-radius: 0.55rem;
   background: #fff;
   padding: 0.35rem 0.25rem;
-  min-height: 12rem;
-  max-height: 26rem;
+  display: block;
+  height: 30rem;
+  min-height: 18rem;
+  max-height: 85vh;
   overflow: auto;
   resize: vertical;
-}
-
-.trees-expanded .content-grid {
-  grid-template-columns: minmax(24rem, 34rem) 1fr;
-}
-
-.trees-expanded .tree-list {
-  min-height: 18rem;
-  max-height: none;
 }
 
 .tree-branch {
@@ -385,6 +378,20 @@ code {
 }
 
 .author-filter-btn:hover {
+  text-decoration: underline;
+}
+
+.reindex-btn {
+  border: 0;
+  background: transparent;
+  color: #1d2127;
+  padding: 0;
+  border-radius: 0;
+  text-align: left;
+  cursor: pointer;
+}
+
+.reindex-btn:hover {
   text-decoration: underline;
 }
 

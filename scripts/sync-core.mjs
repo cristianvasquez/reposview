@@ -179,6 +179,25 @@ function toRepoInfoFromGitDir(gitDir) {
   };
 }
 
+function isLikelyBareRepoDir(repoPath) {
+  return fs.existsSync(path.join(repoPath, 'HEAD')) && fs.existsSync(path.join(repoPath, 'objects'));
+}
+
+function toRepoInfoFromPath(repoPath) {
+  const resolved = path.resolve(repoPath);
+  const dotGit = path.join(resolved, '.git');
+
+  if (fs.existsSync(dotGit) && fs.statSync(dotGit).isDirectory()) {
+    return toRepoInfoFromGitDir(dotGit);
+  }
+
+  if (isLikelyBareRepoDir(resolved)) {
+    return toRepoInfoFromGitDir(resolved);
+  }
+
+  throw new Error(`path is not a git repository: ${resolved}`);
+}
+
 async function getRepoMetadata(repo, verbose = false) {
   void verbose;
 
@@ -271,12 +290,10 @@ CREATE TABLE IF NOT EXISTS repositories (
   last_commit_author TEXT,
   is_bare INTEGER NOT NULL DEFAULT 0,
   first_seen_at TEXT NOT NULL,
-  last_seen_at TEXT NOT NULL,
-  missing_at TEXT
+  last_seen_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_repositories_lineage ON repositories(lineage);
 CREATE INDEX IF NOT EXISTS idx_repositories_origin ON repositories(origin);
-CREATE INDEX IF NOT EXISTS idx_repositories_missing_at ON repositories(missing_at);
 `);
 
   ensureColumn(db, 'repositories', 'last_commit_author', 'ALTER TABLE repositories ADD COLUMN last_commit_author TEXT;');
@@ -286,8 +303,8 @@ CREATE INDEX IF NOT EXISTS idx_repositories_missing_at ON repositories(missing_a
 
 function prepareSyncStatements(db) {
   const upsert = db.prepare(`
-INSERT INTO repositories (path, git_dir, lineage, origin, branch, last_commit_author, is_bare, first_seen_at, last_seen_at, missing_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+INSERT INTO repositories (path, git_dir, lineage, origin, branch, last_commit_author, is_bare, first_seen_at, last_seen_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(path) DO UPDATE SET
   git_dir=excluded.git_dir,
   lineage=excluded.lineage,
@@ -295,15 +312,12 @@ ON CONFLICT(path) DO UPDATE SET
   branch=excluded.branch,
   last_commit_author=excluded.last_commit_author,
   is_bare=excluded.is_bare,
-  last_seen_at=excluded.last_seen_at,
-  missing_at=NULL;
+  last_seen_at=excluded.last_seen_at;
 `);
 
-  const markMissing = db.prepare(
-    'UPDATE repositories SET missing_at = ? WHERE last_seen_at < ? AND missing_at IS NULL;'
-  );
+  const pruneMissing = db.prepare('DELETE FROM repositories WHERE last_seen_at < ?;');
 
-  return { upsert, markMissing };
+  return { upsert, pruneMissing };
 }
 
 function flushRows(db, upsert, rows, now) {
@@ -333,8 +347,8 @@ function flushRows(db, upsert, rows, now) {
   return rows.length;
 }
 
-function finalizeSync(db, markMissing, now) {
-  markMissing.run(now, now);
+function finalizeSync(db, pruneMissing, now) {
+  pruneMissing.run(now);
 }
 
 export async function runSync(rawOptions = {}) {
@@ -370,14 +384,14 @@ export async function runSync(rawOptions = {}) {
 
   let db = null;
   let upsert = null;
-  let markMissing = null;
+  let pruneMissing = null;
 
   if (!opts.dryRun) {
     const { DatabaseSync } = await import('node:sqlite');
     db = ensureSchema(dbPath, DatabaseSync);
     const statements = prepareSyncStatements(db);
     upsert = statements.upsert;
-    markMissing = statements.markMissing;
+    pruneMissing = statements.pruneMissing;
   }
 
   for (let i = 0; i < gitDirs.length; i += 1) {
@@ -424,7 +438,7 @@ export async function runSync(rawOptions = {}) {
     try {
       persistedRepos += flushRows(db, upsert, repos, now);
       repos.length = 0;
-      finalizeSync(db, markMissing, now);
+      finalizeSync(db, pruneMissing, now);
     } finally {
       db.close();
     }
@@ -439,4 +453,44 @@ export async function runSync(rawOptions = {}) {
     scanner: discovery.scanner,
     durationMs: Date.now() - startedAtMs
   };
+}
+
+export async function reindexRepositoryByPath(dbPath, repoPath) {
+  const resolvedDb = path.resolve(dbPath);
+  const resolvedRepo = path.resolve(repoPath);
+  const now = new Date().toISOString();
+  const repo = toRepoInfoFromPath(resolvedRepo);
+  const metadata = await getRepoMetadata(repo);
+
+  const { DatabaseSync } = await import('node:sqlite');
+  const db = ensureSchema(resolvedDb, DatabaseSync);
+
+  try {
+    const { upsert } = prepareSyncStatements(db);
+    flushRows(db, upsert, [metadata], now);
+  } finally {
+    db.close();
+  }
+
+  return { ...metadata, last_seen_at: now };
+}
+
+export async function deleteRepositoryByPath(dbPath, repoPath) {
+  const resolvedDb = path.resolve(dbPath);
+  const resolvedRepo = path.resolve(repoPath);
+
+  const { DatabaseSync } = await import('node:sqlite');
+  const db = ensureSchema(resolvedDb, DatabaseSync);
+
+  try {
+    const stmt = db.prepare('DELETE FROM repositories WHERE path = ?;');
+    const result = stmt.run(resolvedRepo);
+    const changes = Number(result?.changes || 0);
+    if (changes === 0) {
+      return { deleted: false, path: resolvedRepo, error: 'path not indexed' };
+    }
+    return { deleted: true, path: resolvedRepo };
+  } finally {
+    db.close();
+  }
 }

@@ -20,6 +20,8 @@ I want a catalog of all repositories on my system, including their origins and o
 
 ## repo-identifier
 
+It's the upstream origin. Otherwise is `local:{birth certificate}`
+
 The **root commit hash** is git's closest thing to a birth certificate. Every clone of a repo shares it. You get it with:
 
 ```bash
@@ -50,11 +52,11 @@ Defaults:
 
 - Scans from `$HOME`
 - Excludes hidden top-level folders under `$HOME` using regex like:
-  `^/home/your-user/\.[^/]+(?:/|$)`
+  `^\$HOME/\.[^/]+(?:/|$)`
 - Uses a pure Node.js recursive directory walk (no Python, no shelling out to `git`)
 - Upserts into SQLite with sync behavior:
   - updates `last_seen_at` for repos found in the current run
-  - sets `missing_at` when a previously indexed repo is not found anymore
+  - deletes rows for repos that are no longer found
 
 Useful options:
 
@@ -81,16 +83,6 @@ http://127.0.0.1:8790
 ```
 
 From the UI, click `Sync now` to run a background index with live progress updates.
-
-## Privacy pre-commit hook
-
-Enable the repository hook path so commits are checked for obvious private strings:
-
-```bash
-git config core.hooksPath .githooks
-```
-
-The hook at `.githooks/pre-commit` blocks commits that contain likely sensitive local paths or personal emails.
 
 Performance note:
 

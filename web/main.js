@@ -2,7 +2,6 @@ import 'tabulator-tables/dist/css/tabulator.min.css';
 import { TabulatorFull as Tabulator } from 'tabulator-tables';
 
 const syncBtn = document.getElementById('sync-btn');
-const treeViewToggleBtn = document.getElementById('tree-view-toggle');
 const syncStatus = document.getElementById('sync-status');
 const rowsMeta = document.getElementById('rows-meta');
 const rowsTable = document.getElementById('rows-table');
@@ -28,8 +27,6 @@ const treeNodeIndex = {
   path: new Map(),
   origin: new Map()
 };
-
-const TREE_VIEW_STORAGE_KEY = 'reposview.treeViewExpanded';
 
 function esc(value) {
   return String(value)
@@ -132,6 +129,15 @@ function authorFormatter(cell) {
   return `<button type="button" class="author-filter-btn" data-author="${esc(value)}"><code>${esc(value)}</code></button>`;
 }
 
+function reindexFormatter(cell) {
+  const value = String(cell.getValue() || '').trim();
+  const row = cell.getRow().getData();
+  const repoPath = String(row?.path || '').trim();
+  if (!value) return '';
+  if (!repoPath) return esc(value);
+  return `<button type="button" class="reindex-btn" data-path="${esc(repoPath)}">${esc(value)}</button>`;
+}
+
 const table = new Tabulator(rowsTable, {
   index: 'path',
   layout: 'fitColumns',
@@ -154,7 +160,7 @@ const table = new Tabulator(rowsTable, {
       widthGrow: 2,
       formatter: authorFormatter
     },
-    { title: 'last_seen_at', field: 'last_seen_at', sorter: 'string' }
+    { title: 'last_seen_at', field: 'last_seen_at', sorter: 'string', formatter: reindexFormatter }
   ]
 });
 
@@ -291,6 +297,15 @@ function renderTree(el, nodes, selectedPrefix, facetName) {
   el.innerHTML = renderTreeBranch(roots, selectedPrefix, facetName, collapsedSet);
 }
 
+function scrollSelectedTreeNodeIntoView(treeName, selectedPrefix) {
+  if (!selectedPrefix) return;
+  const container = treeElementByName(treeName);
+  if (!container) return;
+  const selected = container.querySelector(`button.tree-select[data-tree="${treeName}"][data-prefix="${CSS.escape(selectedPrefix)}"]`);
+  if (!selected) return;
+  selected.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+}
+
 function renderActiveFilters(state) {
   const chips = [];
 
@@ -318,6 +333,10 @@ function renderFacets(facets, state) {
   renderTree(pathTree, facets?.localPathTree || [], state.pathPrefix, 'path');
   renderTree(originTree, facets?.originTree || [], state.originPrefix, 'origin');
   renderActiveFilters(state);
+  requestAnimationFrame(() => {
+    scrollSelectedTreeNodeIntoView('origin', state.originPrefix);
+    scrollSelectedTreeNodeIntoView('path', state.pathPrefix);
+  });
 }
 
 function applyTreeClick(event) {
@@ -475,17 +494,6 @@ function applyChipClear(event) {
   void refreshRows();
 }
 
-function applyTreeViewMode(expanded) {
-  document.body.classList.toggle('trees-expanded', expanded);
-  treeViewToggleBtn.textContent = `Expanded trees: ${expanded ? 'on' : 'off'}`;
-}
-
-function toggleTreeViewMode() {
-  const expanded = !document.body.classList.contains('trees-expanded');
-  applyTreeViewMode(expanded);
-  window.localStorage.setItem(TREE_VIEW_STORAGE_KEY, expanded ? '1' : '0');
-}
-
 function applyAuthorClick(event) {
   const button = event.target.closest('button.author-filter-btn[data-author]');
   if (!button) return;
@@ -517,6 +525,46 @@ async function applyPathOpenClick(event) {
 
   const fallbackHref = pathToGhosttyHref(pathValue);
   if (fallbackHref) window.location.assign(fallbackHref);
+}
+
+async function applyReindexClick(event) {
+  const button = event.target.closest('button.reindex-btn[data-path]');
+  if (!button) return;
+  event.preventDefault();
+
+  const repoPath = button.getAttribute('data-path') || '';
+  if (!repoPath) return;
+
+  button.disabled = true;
+  const prevStatus = syncStatus.textContent;
+  syncStatus.textContent = `reindexing ${repoPath}...`;
+
+  try {
+    const res = await fetch('/actions/reindex-repo', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ path: repoPath })
+    });
+
+    if (!res.ok) {
+      const payload = await res.json().catch(() => ({}));
+      throw new Error(payload?.error || 'reindex failed');
+    }
+
+    const payload = await res.json().catch(() => ({}));
+    if (payload?.deleted) syncStatus.textContent = `deleted from index ${repoPath}`;
+    else syncStatus.textContent = `reindexed ${repoPath}`;
+    await refreshRows();
+  } catch (error) {
+    syncStatus.textContent = `reindex failed: ${error instanceof Error ? error.message : String(error)}`;
+  } finally {
+    button.disabled = false;
+    setTimeout(() => {
+      if (syncStatus.textContent?.startsWith('reindex')) {
+        syncStatus.textContent = prevStatus;
+      }
+    }, 1800);
+  }
 }
 
 async function fetchRows() {
@@ -642,7 +690,6 @@ function clearAllFilters() {
 }
 
 async function init() {
-  applyTreeViewMode(window.localStorage.getItem(TREE_VIEW_STORAGE_KEY) === '1');
   const state = stateFromUrl();
   applyStateToControls(state);
   renderActiveFilters(state);
@@ -665,10 +712,10 @@ async function init() {
   originTree.addEventListener('click', applyTreeClick);
   pathTree.addEventListener('keydown', applyTreeKeyboard);
   originTree.addEventListener('keydown', applyTreeKeyboard);
-  treeViewToggleBtn.addEventListener('click', toggleTreeViewMode);
   activeFilters.addEventListener('click', applyChipClear);
   rowsTable.addEventListener('click', applyPathOpenClick);
   rowsTable.addEventListener('click', applyAuthorClick);
+  rowsTable.addEventListener('click', applyReindexClick);
   rowsTable.addEventListener('keydown', (event) => {
     if (event.key === 'Tab' && event.shiftKey) {
       event.preventDefault();
