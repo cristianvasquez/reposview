@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "isomorphic-git": "^1.37.2",
+    "marked": "^17.0.4",
     "tabulator-tables": "^6.4.0"
   },
   "devDependencies": {

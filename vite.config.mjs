@@ -9,6 +9,7 @@ export default defineConfig({
       '/sync': apiOrigin,
       '/sync-status': apiOrigin,
       '/rows': apiOrigin,
+      '/repo-details': apiOrigin,
       '/actions': apiOrigin,
       '/events': apiOrigin,
       '/healthz': apiOrigin

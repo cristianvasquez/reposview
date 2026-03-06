@@ -11,6 +11,9 @@ importers:
       isomorphic-git:
         specifier: ^1.37.2
         version: 1.37.2
+      marked:
+        specifier: ^17.0.4
+        version: 17.0.4
       tabulator-tables:
         specifier: ^6.4.0
         version: 6.4.0
@@ -454,6 +457,11 @@ packages:
   isomorphic-git@1.37.2:
     resolution: {integrity: sha512-HCQBBKmXIMPdHgYGstSBNp6MNmVcMQBbUqJF8xfywFmlpNseO4KKex59YlXqNxhRxmv3fUZwvNWvMyOdc1VvhA==}
     engines: {node: '>=14.17'}
+    hasBin: true
+
+  marked@17.0.4:
+    resolution: {integrity: sha512-NOmVMM+KAokHMvjWmC5N/ZOvgmSWuqJB8FoYI019j4ogb/PeRMKoKIjReZ2w3376kkA8dSJIP8uD993Kxc0iRQ==}
+    engines: {node: '>= 20'}
     hasBin: true
 
   math-intrinsics@1.1.0:
@@ -928,6 +936,8 @@ snapshots:
       readable-stream: 4.7.0
       sha.js: 2.4.12
       simple-get: 4.0.1
+
+  marked@17.0.4: {}
 
   math-intrinsics@1.1.0: {}
 

@@ -244,6 +244,7 @@ async function getRepoMetadata(repo, verbose = false) {
   }
 
   let lastCommitAuthor = null;
+  let lastCommitAt = null;
   if (headOid) {
     try {
       const commit = await git.readCommit({ ...repo.ctx, oid: headOid });
@@ -253,8 +254,14 @@ async function getRepoMetadata(repo, verbose = false) {
       if (name && email) lastCommitAuthor = `${name} <${email}>`;
       else if (name) lastCommitAuthor = name;
       else if (email) lastCommitAuthor = email;
+
+      const authorTimestamp = Number(author?.timestamp);
+      if (Number.isFinite(authorTimestamp) && authorTimestamp > 0) {
+        lastCommitAt = new Date(authorTimestamp * 1000).toISOString();
+      }
     } catch {
       lastCommitAuthor = null;
+      lastCommitAt = null;
     }
   }
 
@@ -265,6 +272,7 @@ async function getRepoMetadata(repo, verbose = false) {
     origin,
     branch,
     last_commit_author: lastCommitAuthor,
+    last_commit_at: lastCommitAt,
     is_bare: isBare
   };
 }
@@ -288,6 +296,7 @@ CREATE TABLE IF NOT EXISTS repositories (
   origin TEXT,
   branch TEXT,
   last_commit_author TEXT,
+  last_commit_at TEXT,
   is_bare INTEGER NOT NULL DEFAULT 0,
   first_seen_at TEXT NOT NULL,
   last_seen_at TEXT NOT NULL
@@ -297,20 +306,22 @@ CREATE INDEX IF NOT EXISTS idx_repositories_origin ON repositories(origin);
 `);
 
   ensureColumn(db, 'repositories', 'last_commit_author', 'ALTER TABLE repositories ADD COLUMN last_commit_author TEXT;');
+  ensureColumn(db, 'repositories', 'last_commit_at', 'ALTER TABLE repositories ADD COLUMN last_commit_at TEXT;');
 
   return db;
 }
 
 function prepareSyncStatements(db) {
   const upsert = db.prepare(`
-INSERT INTO repositories (path, git_dir, lineage, origin, branch, last_commit_author, is_bare, first_seen_at, last_seen_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO repositories (path, git_dir, lineage, origin, branch, last_commit_author, last_commit_at, is_bare, first_seen_at, last_seen_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(path) DO UPDATE SET
   git_dir=excluded.git_dir,
   lineage=excluded.lineage,
   origin=excluded.origin,
   branch=excluded.branch,
   last_commit_author=excluded.last_commit_author,
+  last_commit_at=excluded.last_commit_at,
   is_bare=excluded.is_bare,
   last_seen_at=excluded.last_seen_at;
 `);
@@ -333,6 +344,7 @@ function flushRows(db, upsert, rows, now) {
         row.origin,
         row.branch,
         row.last_commit_author,
+        row.last_commit_at,
         row.is_bare,
         now,
         now

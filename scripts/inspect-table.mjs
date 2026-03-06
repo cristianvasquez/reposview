@@ -123,6 +123,90 @@ async function readJsonBody(req, maxBytes = 64 * 1024) {
   return JSON.parse(Buffer.concat(chunks).toString('utf8'));
 }
 
+function walkMarkdownFiles(repoPath) {
+  const ignoredDirs = new Set(['.git', 'node_modules', '.next', '.cache', 'dist', 'build', 'target', '.venv', 'venv']);
+  const stack = [repoPath];
+  const found = [];
+  let scanned = 0;
+  const maxEntries = 12000;
+
+  while (stack.length > 0 && scanned < maxEntries) {
+    const dir = stack.pop();
+    let entries = [];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+
+    for (const entry of entries) {
+      scanned += 1;
+      if (scanned >= maxEntries) break;
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (!ignoredDirs.has(entry.name)) stack.push(full);
+        continue;
+      }
+      if (!entry.isFile()) continue;
+      if (/\.(md|markdown)$/i.test(entry.name)) found.push(full);
+    }
+  }
+
+  found.sort((a, b) => a.localeCompare(b));
+  return found;
+}
+
+function findReadmeFile(repoPath) {
+  const preferred = ['README.md', 'readme.md', 'CLAUDE.md', 'claude.md'].map((name) => path.join(repoPath, name));
+  for (const candidate of preferred) {
+    try {
+      if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) return candidate;
+    } catch {
+      // ignore stat/access errors and continue
+    }
+  }
+
+  const markdownFiles = walkMarkdownFiles(repoPath);
+  if (markdownFiles.length === 0) return null;
+  return markdownFiles[0];
+}
+
+function readRepoDetails(repoPath) {
+  const resolved = path.resolve(repoPath);
+  if (!path.isAbsolute(resolved)) {
+    return { ok: false, error: 'path must be absolute' };
+  }
+
+  if (!fs.existsSync(resolved) || !fs.statSync(resolved).isDirectory()) {
+    return { ok: false, error: 'repository path not found' };
+  }
+
+  const readmePath = findReadmeFile(resolved);
+  if (!readmePath) {
+    return {
+      ok: true,
+      path: resolved,
+      readme: { exists: false, path: null, content: '', truncated: false }
+    };
+  }
+
+  const maxBytes = 250 * 1024;
+  const stat = fs.statSync(readmePath);
+  const truncated = stat.size > maxBytes;
+  const content = fs.readFileSync(readmePath, 'utf8').slice(0, maxBytes);
+
+  return {
+    ok: true,
+    path: resolved,
+    readme: {
+      exists: true,
+      path: readmePath,
+      content,
+      truncated
+    }
+  };
+}
+
 function bareFromQuery(url) {
   const value = qParam(url, 'bare', '').toLowerCase();
   if (value === 'bare' || value === 'nonbare') return value;
@@ -218,9 +302,9 @@ function buildWhereClause(filters, options = {}) {
   }
 
   if (filters.q.trim().length > 0) {
-    whereParts.push('(path LIKE ? OR origin LIKE ? OR branch LIKE ? OR lineage LIKE ? OR last_commit_author LIKE ?)');
+    whereParts.push('(path LIKE ? OR origin LIKE ? OR branch LIKE ? OR lineage LIKE ? OR last_commit_author LIKE ? OR last_commit_at LIKE ?)');
     const like = `%${filters.q.trim()}%`;
-    params.push(like, like, like, like, like);
+    params.push(like, like, like, like, like, like);
   }
 
   if (!options.ignorePathPrefix && filters.pathPrefix) {
@@ -245,12 +329,12 @@ function buildWhereClause(filters, options = {}) {
 
 function buildQuery(filters) {
   const { sort, dir } = filters;
-  const validSort = new Set(['path', 'origin', 'branch', 'last_commit_author', 'last_seen_at']);
+  const validSort = new Set(['path', 'origin', 'branch', 'last_commit_author', 'last_commit_at', 'last_seen_at']);
   const safeSort = validSort.has(sort) ? sort : 'path';
   const safeDir = dir === 'desc' ? 'DESC' : 'ASC';
   const { whereSql, params } = buildWhereClause(filters);
   const sql = `
-SELECT path, origin, branch, lineage, last_commit_author, is_bare, first_seen_at, last_seen_at
+SELECT path, origin, branch, lineage, last_commit_author, last_commit_at, is_bare, first_seen_at, last_seen_at
 FROM repositories
 ${whereSql}
 ORDER BY ${safeSort} ${safeDir}
@@ -344,7 +428,7 @@ function buildOriginTreeFacet(rows) {
 function fetchRowsForFilterSet(db, filters, options = {}) {
   const { whereSql, params } = buildWhereClause(filters, options);
   const sql = `
-SELECT path, origin, branch, lineage, last_commit_author, is_bare, first_seen_at, last_seen_at
+SELECT path, origin, branch, lineage, last_commit_author, last_commit_at, is_bare, first_seen_at, last_seen_at
 FROM repositories
 ${whereSql};
 `;
@@ -415,7 +499,7 @@ function readRows(dbPath, filters) {
 function renderPage({ rows, totalCount, q, sort, dir, syncState }) {
   const oppositeDir = dir === 'asc' ? 'desc' : 'asc';
 
-  const links = ['path', 'origin', 'branch', 'last_commit_author', 'last_seen_at']
+  const links = ['path', 'origin', 'branch', 'last_commit_author', 'last_commit_at', 'last_seen_at']
     .map((key) => {
       const href = `/?q=${encodeURIComponent(q)}&sort=${encodeURIComponent(key)}&dir=${encodeURIComponent(
         sort === key ? oppositeDir : 'asc'
@@ -443,6 +527,7 @@ function renderPage({ rows, totalCount, q, sort, dir, syncState }) {
 <td>${r.origin ? `<code>${esc(r.origin)}</code>` : ''}</td>
 <td>${r.branch ? `<code>${esc(r.branch)}</code>` : ''}</td>
 <td>${r.last_commit_author ? `<code>${esc(r.last_commit_author)}</code>` : ''}</td>
+<td>${esc(r.last_commit_at || '')}</td>
 <td>${esc(r.last_seen_at || '')}</td>
 </tr>`;
     })
@@ -493,6 +578,7 @@ function renderPage({ rows, totalCount, q, sort, dir, syncState }) {
         <th>origin</th>
         <th>branch</th>
         <th>last_commit_author</th>
+        <th>last_commit_at</th>
         <th>last_seen_at</th>
       </tr>
     </thead>
@@ -525,6 +611,7 @@ function renderPage({ rows, totalCount, q, sort, dir, syncState }) {
         const origin = r.origin ? '<code>' + escHtml(r.origin) + '</code>' : '';
         const branch = r.branch ? '<code>' + escHtml(r.branch) + '</code>' : '';
         const lastCommitAuthor = r.last_commit_author ? '<code>' + escHtml(r.last_commit_author) + '</code>' : '';
+        const lastCommitAt = escHtml(r.last_commit_at || '');
         const path = '<code>' + escHtml(r.path) + '</code>';
         const lastSeen = escHtml(r.last_seen_at || '');
         return '<tr>' +
@@ -532,6 +619,7 @@ function renderPage({ rows, totalCount, q, sort, dir, syncState }) {
           '<td>' + origin + '</td>' +
           '<td>' + branch + '</td>' +
           '<td>' + lastCommitAuthor + '</td>' +
+          '<td>' + lastCommitAt + '</td>' +
           '<td>' + lastSeen + '</td>' +
           '</tr>';
       }).join('');
@@ -820,6 +908,22 @@ async function main() {
       res.statusCode = 200;
       res.setHeader('Content-Type', 'application/json; charset=utf-8');
       res.end(JSON.stringify({ rows: data.rows, totalCount: data.totalCount, databaseTotal: data.databaseTotal, facets: data.facets }));
+      return;
+    }
+
+    if (url.pathname === '/repo-details') {
+      const repoPath = qParam(url, 'path', '').trim();
+      if (!repoPath) {
+        res.statusCode = 400;
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        res.end(JSON.stringify({ ok: false, error: 'path query parameter is required' }));
+        return;
+      }
+
+      const payload = readRepoDetails(repoPath);
+      res.statusCode = payload.ok ? 200 : 404;
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.end(JSON.stringify(payload));
       return;
     }
 

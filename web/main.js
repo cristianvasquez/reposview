@@ -1,5 +1,6 @@
 import 'tabulator-tables/dist/css/tabulator.min.css';
 import { TabulatorFull as Tabulator } from 'tabulator-tables';
+import { marked } from 'marked';
 
 const syncBtn = document.getElementById('sync-btn');
 const syncStatus = document.getElementById('sync-status');
@@ -10,13 +11,31 @@ const qInput = document.getElementById('q');
 const activeFilters = document.getElementById('active-filters');
 const pathTree = document.getElementById('path-tree');
 const originTree = document.getElementById('origin-tree');
+let repoDetails = document.getElementById('repo-details');
 
-const sortKeys = ['path', 'origin', 'branch', 'last_commit_author', 'last_seen_at'];
+if (!repoDetails) {
+  const results = document.querySelector('.results');
+  if (results) {
+    repoDetails = document.createElement('section');
+    repoDetails.id = 'repo-details';
+    repoDetails.className = 'repo-details is-hidden';
+    repoDetails.setAttribute('aria-live', 'polite');
+    if (rowsTable && rowsTable.parentElement === results) {
+      results.insertBefore(repoDetails, rowsTable);
+    } else {
+      results.appendChild(repoDetails);
+    }
+  }
+}
+
+const sortKeys = ['path', 'origin', 'branch', 'last_commit_author', 'last_commit_at', 'last_seen_at'];
 let pollTimer = null;
 let rowsTimer = null;
 let lastRunAt = null;
 let lastFacets = {};
 let suppressSortSync = false;
+let repoDetailsRequestId = 0;
+let pendingTreeFocus = null;
 
 const collapsedTreeState = {
   path: new Set(),
@@ -160,6 +179,7 @@ const table = new Tabulator(rowsTable, {
       widthGrow: 2,
       formatter: authorFormatter
     },
+    { title: 'last commit', field: 'last_commit_at', sorter: 'string', minWidth: 170 },
     { title: 'last_seen_at', field: 'last_seen_at', sorter: 'string', formatter: reindexFormatter }
   ]
 });
@@ -204,6 +224,103 @@ function renderRows(rows, totalCount, databaseTotal, state) {
       suppressSortSync = false;
     }, 0);
   });
+}
+
+function detailsValue(value, { code = false } = {}) {
+  const text = String(value || '').trim();
+  if (!text) return '<span class="repo-details-empty">(none)</span>';
+  if (code) return `<code>${esc(text)}</code>`;
+  return esc(text);
+}
+
+function renderRepoDetailsLoading(row) {
+  if (!repoDetails) return;
+  repoDetails.classList.remove('is-hidden');
+  repoDetails.innerHTML = `<h3>Repository details</h3>
+    <div class="repo-row-card">
+      <div class="repo-row-item"><span class="repo-row-key">path</span><span class="repo-row-val"><button type="button" class="path-open-btn" data-path="${esc(
+        row.path || ''
+      )}"><code>${esc(row.path || '')}</code></button></span></div>
+      <div class="repo-row-item"><span class="repo-row-key">origin</span><span class="repo-row-val">${originFormatter({
+        getValue: () => row.origin
+      })}</span></div>
+      <div class="repo-row-item"><span class="repo-row-key">branch</span><span class="repo-row-val">${detailsValue(row.branch, {
+        code: true
+      })}</span></div>
+      <div class="repo-row-item"><span class="repo-row-key">last author</span><span class="repo-row-val">${authorFormatter({
+        getValue: () => row.last_commit_author
+      })}</span></div>
+      <div class="repo-row-item"><span class="repo-row-key">last commit</span><span class="repo-row-val">${detailsValue(
+        row.last_commit_at
+      )}</span></div>
+      <div class="repo-row-item"><span class="repo-row-key">last seen</span><span class="repo-row-val">${detailsValue(
+        row.last_seen_at
+      )}</span></div>
+    </div>
+    <div class="repo-details-empty">loading README...</div>`;
+}
+
+function renderRepoDetails(row, payload) {
+  if (!repoDetails) return;
+  const readme = payload?.readme || { exists: false, content: '', truncated: false, path: null };
+  const readmeHtml = readme.exists ? marked.parse(String(readme.content || ''), { gfm: true, breaks: true }) : '';
+  const readmeBody = readme.exists
+    ? `<h3>README ${readme.path ? `<code>${esc(readme.path)}</code>` : ''}</h3>
+       <div class="repo-markdown">${readmeHtml}</div>
+       ${readme.truncated ? '<div class="repo-details-empty">README preview is truncated.</div>' : ''}`
+    : '<div class="repo-details-empty">README not found in this repository root.</div>';
+
+  repoDetails.classList.remove('is-hidden');
+  repoDetails.innerHTML = `<h3>Repository details</h3>
+    <div class="repo-row-card">
+      <div class="repo-row-item"><span class="repo-row-key">path</span><span class="repo-row-val"><button type="button" class="path-open-btn" data-path="${esc(
+        row.path || ''
+      )}"><code>${esc(row.path || '')}</code></button></span></div>
+      <div class="repo-row-item"><span class="repo-row-key">origin</span><span class="repo-row-val">${originFormatter({
+        getValue: () => row.origin
+      })}</span></div>
+      <div class="repo-row-item"><span class="repo-row-key">branch</span><span class="repo-row-val">${detailsValue(row.branch, {
+        code: true
+      })}</span></div>
+      <div class="repo-row-item"><span class="repo-row-key">last author</span><span class="repo-row-val">${authorFormatter({
+        getValue: () => row.last_commit_author
+      })}</span></div>
+      <div class="repo-row-item"><span class="repo-row-key">last commit</span><span class="repo-row-val">${detailsValue(
+        row.last_commit_at
+      )}</span></div>
+      <div class="repo-row-item"><span class="repo-row-key">last seen</span><span class="repo-row-val">${detailsValue(
+        row.last_seen_at
+      )}</span></div>
+    </div>
+    ${readmeBody}`;
+}
+
+async function refreshRepoDetails(rows) {
+  const requestId = ++repoDetailsRequestId;
+  if (!repoDetails) return;
+
+  if (rows.length !== 1) {
+    repoDetails.classList.add('is-hidden');
+    repoDetails.innerHTML = '';
+    return;
+  }
+
+  const row = rows[0];
+  renderRepoDetailsLoading(row);
+
+  try {
+    const params = new URLSearchParams({ path: row.path || '' });
+    const res = await fetch(`/repo-details?${params.toString()}`);
+    const payload = await res.json().catch(() => ({}));
+    if (requestId !== repoDetailsRequestId) return;
+    if (!res.ok) throw new Error(payload?.error || 'failed to load repository details');
+    renderRepoDetails(row, payload);
+  } catch (error) {
+    if (requestId !== repoDetailsRequestId) return;
+    repoDetails.classList.remove('is-hidden');
+    repoDetails.innerHTML = `<h3>Repository details</h3>
+      <div class="repo-details-empty">${esc(error instanceof Error ? error.message : String(error))}</div>`;
+  }
 }
 
 function renderBranchOptions(options, selectedValue) {
@@ -336,6 +453,10 @@ function renderFacets(facets, state) {
   requestAnimationFrame(() => {
     scrollSelectedTreeNodeIntoView('origin', state.originPrefix);
     scrollSelectedTreeNodeIntoView('path', state.pathPrefix);
+    if (pendingTreeFocus?.treeName && pendingTreeFocus?.prefix) {
+      focusTreeNode(pendingTreeFocus.treeName, pendingTreeFocus.prefix);
+      pendingTreeFocus = null;
+    }
   });
 }
 
@@ -361,6 +482,7 @@ function applyTreeClick(event) {
 
   if (treeName === 'path') next.pathPrefix = next.pathPrefix === prefix ? '' : prefix;
   if (treeName === 'origin') next.originPrefix = next.originPrefix === prefix ? '' : prefix;
+  pendingTreeFocus = { treeName, prefix };
 
   writeUrlState(next);
   applyStateToControls(next);
@@ -599,6 +721,7 @@ async function refreshRows() {
 
   lastFacets = data.facets || {};
   renderRows(rows, totalCount, data.databaseTotal || 0, state);
+  void refreshRepoDetails(rows);
   renderFacets(lastFacets, state);
 }
 
@@ -689,6 +812,13 @@ function clearAllFilters() {
   void refreshRows();
 }
 
+function bindInteractiveHandlers(container) {
+  if (!container) return;
+  container.addEventListener('click', applyPathOpenClick);
+  container.addEventListener('click', applyAuthorClick);
+  container.addEventListener('click', applyReindexClick);
+}
+
 async function init() {
   const state = stateFromUrl();
   applyStateToControls(state);
@@ -713,9 +843,8 @@ async function init() {
   pathTree.addEventListener('keydown', applyTreeKeyboard);
   originTree.addEventListener('keydown', applyTreeKeyboard);
   activeFilters.addEventListener('click', applyChipClear);
-  rowsTable.addEventListener('click', applyPathOpenClick);
-  rowsTable.addEventListener('click', applyAuthorClick);
-  rowsTable.addEventListener('click', applyReindexClick);
+  bindInteractiveHandlers(rowsTable);
+  bindInteractiveHandlers(repoDetails);
   rowsTable.addEventListener('keydown', (event) => {
     if (event.key === 'Tab' && event.shiftKey) {
       event.preventDefault();
