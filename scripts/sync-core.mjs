@@ -165,10 +165,11 @@ async function getRootHash(ctx, headOid) {
 
   const seen = new Set();
   const queue = [headOid];
+  let qHead = 0;
   const roots = [];
 
-  while (queue.length > 0) {
-    const oid = queue.shift();
+  while (qHead < queue.length) {
+    const oid = queue[qHead++];
     if (seen.has(oid)) continue;
     seen.add(oid);
 

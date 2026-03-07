@@ -30,17 +30,12 @@
             </form>
 
             <section class="facet-section">
-              <div class="facet-head">
-                <h2>Web Origin Tree</h2>
+              <div class="tab-bar">
+                <button type="button" class="tab-btn is-active" data-tab="origin">Web Origin</button>
+                <button type="button" class="tab-btn" data-tab="path">Local Path</button>
               </div>
               <div id="origin-tree" class="tree-list"></div>
-            </section>
-
-            <section class="facet-section">
-              <div class="facet-head">
-                <h2>Local Path Tree</h2>
-              </div>
-              <div id="path-tree" class="tree-list"></div>
+              <div id="path-tree" class="tree-list is-hidden"></div>
             </section>
           </aside>
 

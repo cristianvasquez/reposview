@@ -129,6 +129,35 @@ button.ghost {
   margin: 0;
 }
 
+.tab-bar {
+  display: flex;
+  gap: 0.3rem;
+  margin-bottom: 0.5rem;
+}
+
+.tab-btn {
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--muted);
+  padding: 0.25rem 0.65rem;
+  border-radius: 0.5rem;
+  font-size: 0.76rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+}
+
+.tab-btn.is-active {
+  background: var(--accent-soft);
+  border-color: #e4b7a7;
+  color: var(--ink);
+}
+
+.tab-btn:hover:not(.is-active) {
+  background: var(--panel-strong);
+}
+
 .field {
   display: flex;
   flex-direction: column;
@@ -176,6 +205,10 @@ button.ghost {
   max-height: 85vh;
   overflow: auto;
   resize: vertical;
+}
+
+.tree-list.is-hidden {
+  display: none;
 }
 
 .tree-branch {

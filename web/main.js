@@ -805,6 +805,15 @@ async function init() {
       clearAllFilters();
     }
   });
+  document.querySelectorAll('.tab-btn[data-tab]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const tab = btn.getAttribute('data-tab');
+      document.querySelectorAll('.tab-btn[data-tab]').forEach((b) => b.classList.toggle('is-active', b === btn));
+      originTree.classList.toggle('is-hidden', tab !== 'origin');
+      pathTree.classList.toggle('is-hidden', tab !== 'path');
+    });
+  });
+
   pathTree.addEventListener('click', applyTreeClick);
   originTree.addEventListener('click', applyTreeClick);
   pathTree.addEventListener('keydown', applyTreeKeyboard);
