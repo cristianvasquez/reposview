@@ -8,6 +8,7 @@
     "dev": "node scripts/dev.mjs",
     "sync:index": "node scripts/sync-repos.mjs",
     "inspect": "node scripts/inspect-table.mjs",
+    "resolve-identifier": "node scripts/resolve-identifier-cli.mjs",
     "dev:web": "vite --config vite.config.mjs"
   },
   "dependencies": {

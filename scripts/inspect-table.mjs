@@ -6,6 +6,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { DatabaseSync } from 'node:sqlite';
 import { DEFAULT_SYNC_OPTIONS, commandExists, runSync, reindexRepositoryByPath, deleteRepositoryByPath } from './sync-core.mjs';
+import { identifierDisplayFromRow, identifierKeyFromRow } from './resolve-identifier.mjs';
 
 function parseArgs(argv) {
   const opts = {
@@ -206,11 +207,11 @@ function filtersFromUrl(url) {
     sort: qParam(url, 'sort', 'path'),
     dir: qParam(url, 'dir', 'asc').toLowerCase() === 'desc' ? 'desc' : 'asc',
     bare: bareFromQuery(url),
-    origin: qParam(url, 'origin', ''),
+    identifier: qParam(url, 'identifier', qParam(url, 'origin', '')),
     branch: qParam(url, 'branch', ''),
     author: qParam(url, 'author', ''),
     pathPrefix: qParam(url, 'path_prefix', ''),
-    originPrefix: qParam(url, 'origin_prefix', '')
+    identifierPrefix: qParam(url, 'identifier_prefix', qParam(url, 'origin_prefix', ''))
   };
 }
 
@@ -230,40 +231,8 @@ function pathHasPrefix(repoPath, prefix) {
   return pathValue === prefixValue || pathValue.startsWith(`${prefixValue}/`);
 }
 
-function parseOriginToCanonicalKey(rawOrigin) {
-  const raw = String(rawOrigin || '').trim();
-  if (!raw) return '(unknown)';
-
-  const scpLike = raw.match(/^[^@]+@([^:\/\s]+):(.+)$/);
-  if (scpLike) {
-    const host = scpLike[1].toLowerCase();
-    const pathPart = scpLike[2].replace(/\.git$/i, '').replace(/^\/+/, '');
-    const parts = pathPart.split('/').filter(Boolean);
-    return [host, ...parts].join('/');
-  }
-
-  try {
-    const url = new URL(raw);
-    const host = (url.host || '').toLowerCase();
-    const parts = url.pathname.replace(/\.git$/i, '').replace(/^\/+/, '').split('/').filter(Boolean);
-    if (!host) return '(unknown)';
-    return [host, ...parts].join('/');
-  } catch {
-    return '(unknown)';
-  }
-}
-
-function originKeyFromRow(row) {
-  const upstream = String(row.origin || '').trim();
-  if (!upstream) {
-    const lineage = String(row.lineage || '').trim();
-    return lineage ? `local/${lineage}` : 'local/empty';
-  }
-  return parseOriginToCanonicalKey(upstream);
-}
-
-function originHasPrefix(row, prefix) {
-  const key = originKeyFromRow(row);
+function identifierHasPrefix(row, prefix) {
+  const key = identifierKeyFromRow(row);
   const filter = String(prefix || '').trim();
   if (!filter) return true;
   return key === filter || key.startsWith(`${filter}/`);
@@ -289,7 +258,7 @@ function buildWhereClause(filters, options = {}) {
   }
 
   if (filters.q.trim().length > 0) {
-    whereParts.push('(path LIKE ? OR origin LIKE ? OR branch LIKE ? OR lineage LIKE ? OR last_commit_author LIKE ? OR last_commit_at LIKE ?)');
+    whereParts.push('(path LIKE ? OR identifier LIKE ? OR branch LIKE ? OR lineage LIKE ? OR last_commit_author LIKE ? OR last_commit_at LIKE ?)');
     const like = `%${filters.q.trim()}%`;
     params.push(like, like, like, like, like, like);
   }
@@ -304,7 +273,7 @@ function buildWhereClause(filters, options = {}) {
     }
   }
 
-  if (!options.ignoreOrigin) nullableTextFilter('origin', filters.origin, whereParts, params);
+  if (!options.ignoreIdentifier) nullableTextFilter('identifier', filters.identifier, whereParts, params);
   if (!options.ignoreBranch) nullableTextFilter('branch', filters.branch, whereParts, params);
   if (!options.ignoreAuthor) nullableTextFilter('last_commit_author', filters.author, whereParts, params);
 
@@ -391,20 +360,20 @@ function buildLocalPathTreeFacet(rows) {
   }));
 }
 
-function buildOriginTreeFacet(rows) {
-  return buildTreeFacet(rows, (row) => originKeyFromRow(row), { maxNodes: 650 });
+function buildIdentifierTreeFacet(rows) {
+  return buildTreeFacet(rows, (row) => identifierKeyFromRow(row), { maxNodes: 650 });
 }
 
 function fetchRowsForFilterSet(db, filters, options = {}) {
   const { whereSql, params } = buildWhereClause(filters, options);
   const sql = `
-SELECT path, origin, branch, lineage, last_commit_author, last_commit_at, is_bare, first_seen_at, last_seen_at
+SELECT path, identifier, branch, lineage, last_commit_author, last_commit_at, is_bare, first_seen_at, last_seen_at
 FROM repositories
 ${whereSql};
 `;
   let rows = db.prepare(sql).all(...params);
-  if (!options.ignoreOriginPrefix && filters.originPrefix) {
-    rows = rows.filter((row) => originHasPrefix(row, filters.originPrefix));
+  if (!options.ignoreIdentifierPrefix && filters.identifierPrefix) {
+    rows = rows.filter((row) => identifierHasPrefix(row, filters.identifierPrefix));
   }
   return rows;
 }
@@ -420,33 +389,25 @@ function sortRows(rows, safeSort, safeDir) {
   rows.sort((a, b) => compareNullable(a[safeSort], b[safeSort], safeDir) || compareNullable(a.path, b.path, safeDir));
 }
 
-function originDisplay(row) {
-  const upstream = String(row.origin || '').trim();
-  if (upstream) return upstream;
-  const lineage = String(row.lineage || '').trim();
-  if (lineage.startsWith('local:')) return lineage;
-  if (lineage) return `local:${lineage}`;
-  return 'local:empty';
-}
-
 function readRows(dbPath, filters) {
   const db = new DatabaseSync(dbPath, { readOnly: true });
   try {
     const dbTotalStmt = db.prepare('SELECT count(*) as c FROM repositories;');
-    const validSort = new Set(['path', 'origin', 'branch', 'last_commit_author', 'last_commit_at', 'last_seen_at']);
-    const safeSort = validSort.has(filters.sort) ? filters.sort : 'path';
+    const legacySort = filters.sort === 'origin' ? 'identifier' : filters.sort;
+    const validSort = new Set(['path', 'identifier', 'branch', 'last_commit_author', 'last_commit_at', 'last_seen_at']);
+    const safeSort = validSort.has(legacySort) ? legacySort : 'path';
     const safeDir = filters.dir === 'desc' ? 'DESC' : 'ASC';
     const matchedRows = fetchRowsForFilterSet(db, filters);
     sortRows(matchedRows, safeSort, safeDir);
 
-    const rows = matchedRows.slice(0, 1000).map((row) => ({ ...row, origin: originDisplay(row) }));
+    const rows = matchedRows.slice(0, 1000).map((row) => ({ ...row, identifier: identifierDisplayFromRow(row) }));
     const totalCount = matchedRows.length;
     const databaseTotal = dbTotalStmt.get().c;
 
     const bareFacetRows = fetchRowsForFilterSet(db, filters, { ignoreBare: true });
     const branchFacetRows = fetchRowsForFilterSet(db, filters, { ignoreBranch: true });
     const localPathTreeRows = fetchRowsForFilterSet(db, filters, { ignorePathPrefix: true });
-    const originTreeRows = fetchRowsForFilterSet(db, filters, { ignoreOriginPrefix: true });
+    const identifierTreeRows = fetchRowsForFilterSet(db, filters, { ignoreIdentifierPrefix: true });
 
     const facets = {
       bare: aggregateBinaryFacet(
@@ -456,7 +417,7 @@ function readRows(dbPath, filters) {
       ),
       branch: aggregateFacetCounts(branchFacetRows.map((row) => row.branch)).slice(0, 30),
       localPathTree: buildLocalPathTreeFacet(localPathTreeRows),
-      originTree: buildOriginTreeFacet(originTreeRows)
+      identifierTree: buildIdentifierTreeFacet(identifierTreeRows)
     };
 
     return { rows, totalCount, databaseTotal, facets };

@@ -4,7 +4,7 @@ Currently I have all sorts of git clones scattered across my file system
 
 some are work-related, some personal, some linked to agents' projects. While I have some conventions for organizing them, the increasing pace of agent interactions made this management too difficult.
 
-I want a catalog of all repositories on my system, including their origins and other useful metadata.
+I want a catalog of all repositories on my system, including their identifiers and other useful metadata.
 
 ## Goals
 
@@ -20,7 +20,7 @@ I want a catalog of all repositories on my system, including their origins and o
 
 ## repo-identifier
 
-It's the upstream origin. Otherwise is `local:{birth certificate}`
+It's the upstream identifier. Otherwise is `local:{birth certificate}`
 
 The **root commit hash** is git's closest thing to a birth certificate. Every clone of a repo shares it. You get it with:
 
@@ -66,6 +66,12 @@ pnpm run sync:index -- --root / --dry-run
 
 # Override exclusion
 pnpm run sync:index -- --exclude-regex '^$'
+```
+
+Resolve a single repository identifier for agent use:
+
+```bash
+pnpm run resolve-identifier -- /path/to/repo
 ```
 
 ## Inspect UI (dev)

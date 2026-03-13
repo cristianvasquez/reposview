@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import * as git from 'isomorphic-git';
+import { resolveIdentifier, toRepoInfoFromGitDir, toRepoInfoFromPath } from './resolve-identifier.mjs';
 
 export const DEFAULT_SYNC_OPTIONS = {
   db: './data/reposview.sqlite',
@@ -160,79 +161,6 @@ function discoverGitDirs(roots, exclude, scannerMode, onProgress) {
   return discoverWithNodeWalk(roots, exclude, onProgress);
 }
 
-async function getRootHash(ctx, headOid) {
-  if (!headOid) return null;
-
-  const seen = new Set();
-  const queue = [headOid];
-  let qHead = 0;
-  const roots = [];
-
-  while (qHead < queue.length) {
-    const oid = queue[qHead++];
-    if (seen.has(oid)) continue;
-    seen.add(oid);
-
-    let commit;
-    try {
-      commit = await git.readCommit({ ...ctx, oid });
-    } catch {
-      continue;
-    }
-
-    const parents = commit.commit.parent || [];
-    if (parents.length === 0) {
-      roots.push(oid);
-    } else {
-      for (const p of parents) {
-        if (!seen.has(p)) queue.push(p);
-      }
-    }
-  }
-
-  if (roots.length === 0) return null;
-  roots.sort();
-  return roots.join(' + ');
-}
-
-function toRepoInfoFromGitDir(gitDir) {
-  const normalizedGitDir = gitDir.replace(/\/+$/, '');
-  const base = path.basename(normalizedGitDir);
-
-  if (base === '.git') {
-    return {
-      path: path.dirname(normalizedGitDir),
-      gitDir: normalizedGitDir,
-      ctx: { fs, dir: path.dirname(normalizedGitDir), gitdir: normalizedGitDir }
-    };
-  }
-
-  return {
-    path: normalizedGitDir,
-    gitDir: normalizedGitDir,
-    ctx: { fs, gitdir: normalizedGitDir }
-  };
-}
-
-function isLikelyBareRepoDir(repoPath) {
-  return fs.existsSync(path.join(repoPath, 'HEAD')) && fs.existsSync(path.join(repoPath, 'objects'));
-}
-
-function toRepoInfoFromPath(repoPath) {
-  const resolved = path.resolve(repoPath);
-  const dotGit = path.join(resolved, '.git');
-
-  if (fs.existsSync(dotGit) && fs.statSync(dotGit).isDirectory()) {
-    return toRepoInfoFromGitDir(dotGit);
-  }
-
-  if (isLikelyBareRepoDir(resolved)) {
-    return toRepoInfoFromGitDir(resolved);
-  }
-
-  throw new Error(`path is not a git repository: ${resolved}`);
-}
-
 async function getRepoMetadata(repo, verbose = false) {
   void verbose;
 
@@ -242,14 +170,6 @@ async function getRepoMetadata(repo, verbose = false) {
     isBare = String(bareCfg || '').trim() === 'true' ? 1 : 0;
   } catch {
     isBare = repo.path === repo.gitDir ? 1 : 0;
-  }
-
-  let origin = null;
-  try {
-    const cfg = await git.getConfig({ ...repo.ctx, path: 'remote.origin.url' });
-    origin = cfg && String(cfg).trim().length > 0 ? String(cfg).trim() : null;
-  } catch {
-    origin = null;
   }
 
   let headOid = null;
@@ -269,11 +189,7 @@ async function getRepoMetadata(repo, verbose = false) {
     branch = null;
   }
 
-  let lineage = origin;
-  if (!lineage) {
-    const rootHash = await getRootHash(repo.ctx, headOid);
-    lineage = rootHash ? `local:${rootHash}` : 'local:empty';
-  }
+  const { identifier, lineage } = await resolveIdentifier(repo.ctx, headOid);
 
   let lastCommitAuthor = null;
   let lastCommitAt = null;
@@ -301,7 +217,7 @@ async function getRepoMetadata(repo, verbose = false) {
     path: repo.path,
     git_dir: repo.gitDir,
     lineage,
-    origin,
+    identifier,
     branch,
     last_commit_author: lastCommitAuthor,
     last_commit_at: lastCommitAt,
@@ -325,7 +241,7 @@ CREATE TABLE IF NOT EXISTS repositories (
   path TEXT PRIMARY KEY,
   git_dir TEXT NOT NULL,
   lineage TEXT,
-  origin TEXT,
+  identifier TEXT,
   branch TEXT,
   last_commit_author TEXT,
   last_commit_at TEXT,
@@ -334,7 +250,7 @@ CREATE TABLE IF NOT EXISTS repositories (
   last_seen_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_repositories_lineage ON repositories(lineage);
-CREATE INDEX IF NOT EXISTS idx_repositories_origin ON repositories(origin);
+CREATE INDEX IF NOT EXISTS idx_repositories_identifier ON repositories(identifier);
 `);
 
   ensureColumn(db, 'repositories', 'last_commit_author', 'ALTER TABLE repositories ADD COLUMN last_commit_author TEXT;');
@@ -345,12 +261,12 @@ CREATE INDEX IF NOT EXISTS idx_repositories_origin ON repositories(origin);
 
 function prepareSyncStatements(db) {
   const upsert = db.prepare(`
-INSERT INTO repositories (path, git_dir, lineage, origin, branch, last_commit_author, last_commit_at, is_bare, first_seen_at, last_seen_at)
+INSERT INTO repositories (path, git_dir, lineage, identifier, branch, last_commit_author, last_commit_at, is_bare, first_seen_at, last_seen_at)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(path) DO UPDATE SET
   git_dir=excluded.git_dir,
   lineage=excluded.lineage,
-  origin=excluded.origin,
+  identifier=excluded.identifier,
   branch=excluded.branch,
   last_commit_author=excluded.last_commit_author,
   last_commit_at=excluded.last_commit_at,
@@ -373,7 +289,7 @@ function flushRows(db, upsert, rows, now) {
         row.path,
         row.git_dir,
         row.lineage,
-        row.origin,
+        row.identifier,
         row.branch,
         row.last_commit_author,
         row.last_commit_at,

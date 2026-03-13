@@ -460,12 +460,12 @@ code {
   font-size: 0.82rem;
 }
 
-.origin-link {
+.identifier-link {
   color: #9c3f26;
   text-decoration: none;
 }
 
-.origin-link:hover {
+.identifier-link:hover {
   text-decoration: underline;
 }
 

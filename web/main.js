@@ -10,7 +10,7 @@ const filters = document.getElementById('filters');
 const qInput = document.getElementById('q');
 const activeFilters = document.getElementById('active-filters');
 const pathTree = document.getElementById('path-tree');
-const originTree = document.getElementById('origin-tree');
+const identifierTree = document.getElementById('identifier-tree');
 let repoDetails = document.getElementById('repo-details');
 
 if (!repoDetails) {
@@ -28,7 +28,7 @@ if (!repoDetails) {
   }
 }
 
-const sortKeys = ['path', 'origin', 'branch', 'last_commit_author', 'last_commit_at', 'last_seen_at'];
+const sortKeys = ['path', 'identifier', 'branch', 'last_commit_author', 'last_commit_at', 'last_seen_at'];
 let pollTimer = null;
 let rowsTimer = null;
 let lastRunAt = null;
@@ -39,12 +39,12 @@ let pendingTreeFocus = null;
 
 const collapsedTreeState = {
   path: new Set(),
-  origin: new Set()
+  identifier: new Set()
 };
 
 const treeNodeIndex = {
   path: new Map(),
-  origin: new Map()
+  identifier: new Map()
 };
 
 function esc(value) {
@@ -67,8 +67,12 @@ function stateFromUrl() {
     branch: params.get('branch') || '',
     author: params.get('author') || '',
     pathPrefix: params.get('path_prefix') || '',
-    originPrefix: params.get('origin_prefix') || '',
-    sort: sortKeys.includes(params.get('sort') || '') ? params.get('sort') : 'path',
+    identifierPrefix: params.get('identifier_prefix') || params.get('origin_prefix') || '',
+    sort: sortKeys.includes(params.get('sort') || '')
+      ? params.get('sort')
+      : params.get('sort') === 'origin'
+        ? 'identifier'
+        : 'path',
     dir: params.get('dir') === 'desc' ? 'desc' : 'asc'
   };
 }
@@ -81,7 +85,7 @@ function writeUrlState(state) {
   if (state.branch) params.set('branch', state.branch);
   if (state.author) params.set('author', state.author);
   if (state.pathPrefix) params.set('path_prefix', state.pathPrefix);
-  if (state.originPrefix) params.set('origin_prefix', state.originPrefix);
+  if (state.identifierPrefix) params.set('identifier_prefix', state.identifierPrefix);
   params.set('sort', state.sort);
   params.set('dir', state.dir);
   const query = params.toString();
@@ -106,8 +110,8 @@ function pathFormatter(cell) {
   return `<button type="button" class="path-open-btn" data-path="${esc(value)}"><code>${esc(value)}</code></button>`;
 }
 
-function originToHref(origin) {
-  const raw = String(origin || '').trim();
+function identifierToHref(identifier) {
+  const raw = String(identifier || '').trim();
   if (!raw || raw.startsWith('local:')) return null;
 
   if (raw.startsWith('http://') || raw.startsWith('https://')) {
@@ -134,12 +138,12 @@ function originToHref(origin) {
   return null;
 }
 
-function originFormatter(cell) {
+function identifierFormatter(cell) {
   const value = cell.getValue();
   if (!value) return '';
-  const href = originToHref(value);
+  const href = identifierToHref(value);
   if (!href) return `<code>${esc(value)}</code>`;
-  return `<a class="origin-link" href="${esc(href)}" target="_blank" rel="noopener noreferrer"><code>${esc(value)}</code></a>`;
+  return `<a class="identifier-link" href="${esc(href)}" target="_blank" rel="noopener noreferrer"><code>${esc(value)}</code></a>`;
 }
 
 function authorFormatter(cell) {
@@ -169,7 +173,7 @@ const table = new Tabulator(rowsTable, {
   initialSort: [{ column: 'path', dir: 'asc' }],
   columns: [
     { title: 'path', field: 'path', sorter: 'string', formatter: pathFormatter },
-    { title: 'origin', field: 'origin', sorter: 'string', formatter: originFormatter },
+    { title: 'identifier', field: 'identifier', sorter: 'string', formatter: identifierFormatter },
     { title: 'branch', field: 'branch', sorter: 'string', formatter: (cell) => codeFormatter(cell.getValue()) },
     {
       title: 'last author',
@@ -236,7 +240,7 @@ function detailsValue(value, { code = false } = {}) {
 function buildRowCard(row) {
   return `<div class="repo-row-card">
     <div class="repo-row-item"><span class="repo-row-key">path</span><span class="repo-row-val"><button type="button" class="path-open-btn" data-path="${esc(row.path || '')}"><code>${esc(row.path || '')}</code></button></span></div>
-    <div class="repo-row-item"><span class="repo-row-key">origin</span><span class="repo-row-val">${originFormatter({ getValue: () => row.origin })}</span></div>
+    <div class="repo-row-item"><span class="repo-row-key">identifier</span><span class="repo-row-val">${identifierFormatter({ getValue: () => row.identifier })}</span></div>
     <div class="repo-row-item"><span class="repo-row-key">branch</span><span class="repo-row-val">${detailsValue(row.branch, { code: true })}</span></div>
     <div class="repo-row-item"><span class="repo-row-key">last author</span><span class="repo-row-val">${authorFormatter({ getValue: () => row.last_commit_author })}</span></div>
     <div class="repo-row-item"><span class="repo-row-key">last commit</span><span class="repo-row-val">${detailsValue(row.last_commit_at)}</span></div>
@@ -400,7 +404,7 @@ function renderActiveFilters(state) {
   if (state.branch) chips.push({ key: 'branch', value: `branch: ${labelForFacetValue(state.branch)}` });
   if (state.author) chips.push({ key: 'author', value: `author: ${labelForFacetValue(state.author)}` });
   if (state.pathPrefix) chips.push({ key: 'pathPrefix', value: `path: ${state.pathPrefix}` });
-  if (state.originPrefix) chips.push({ key: 'originPrefix', value: `origin: ${state.originPrefix}` });
+  if (state.identifierPrefix) chips.push({ key: 'identifierPrefix', value: `identifier: ${state.identifierPrefix}` });
 
   if (chips.length === 0) {
     activeFilters.innerHTML = '<span class="chip-muted">no active filters</span>';
@@ -415,10 +419,10 @@ function renderActiveFilters(state) {
 function renderFacets(facets, state) {
   lastFacets = facets || {};
   renderTree(pathTree, facets?.localPathTree || [], state.pathPrefix, 'path');
-  renderTree(originTree, facets?.originTree || [], state.originPrefix, 'origin');
+  renderTree(identifierTree, facets?.identifierTree || [], state.identifierPrefix, 'identifier');
   renderActiveFilters(state);
   requestAnimationFrame(() => {
-    scrollSelectedTreeNodeIntoView('origin', state.originPrefix);
+    scrollSelectedTreeNodeIntoView('identifier', state.identifierPrefix);
     scrollSelectedTreeNodeIntoView('path', state.pathPrefix);
     if (pendingTreeFocus?.treeName && pendingTreeFocus?.prefix) {
       focusTreeNode(pendingTreeFocus.treeName, pendingTreeFocus.prefix);
@@ -448,7 +452,7 @@ function applyTreeClick(event) {
   const prefix = select.getAttribute('data-prefix') || '';
 
   if (treeName === 'path') next.pathPrefix = next.pathPrefix === prefix ? '' : prefix;
-  if (treeName === 'origin') next.originPrefix = next.originPrefix === prefix ? '' : prefix;
+  if (treeName === 'identifier') next.identifierPrefix = next.identifierPrefix === prefix ? '' : prefix;
   pendingTreeFocus = { treeName, prefix };
 
   writeUrlState(next);
@@ -457,7 +461,7 @@ function applyTreeClick(event) {
 }
 
 function treeElementByName(treeName) {
-  return treeName === 'path' ? pathTree : originTree;
+  return treeName === 'path' ? pathTree : identifierTree;
 }
 
 function getVisibleTreeSelectButtons(treeName) {
@@ -473,7 +477,7 @@ function focusTreeNode(treeName, prefix) {
 
 function focusTreeDefault(treeName) {
   const state = stateFromUrl();
-  const selectedPrefix = treeName === 'path' ? state.pathPrefix : state.originPrefix;
+  const selectedPrefix = treeName === 'path' ? state.pathPrefix : state.identifierPrefix;
   const buttons = getVisibleTreeSelectButtons(treeName);
   if (!buttons.length) return;
   const selected = selectedPrefix
@@ -492,14 +496,14 @@ function focusResultsSection() {
 }
 
 function focusSectionByOrder(currentSection, direction) {
-  const order = ['filters', 'origin', 'path', 'results'];
+  const order = ['filters', 'identifier', 'path', 'results'];
   const idx = order.indexOf(currentSection);
   const nextIdx = Math.max(0, Math.min(order.length - 1, idx + direction));
   const section = order[nextIdx];
 
   if (section === 'filters') qInput.focus();
   if (section === 'path') focusTreeDefault('path');
-  if (section === 'origin') focusTreeDefault('origin');
+  if (section === 'identifier') focusTreeDefault('identifier');
   if (section === 'results') focusResultsSection();
 }
 
@@ -559,7 +563,7 @@ function applyTreeKeyboard(event) {
 
   if (event.key === 'Tab') {
     event.preventDefault();
-    focusSectionByOrder(treeName === 'path' ? 'path' : 'origin', event.shiftKey ? -1 : 1);
+    focusSectionByOrder(treeName === 'path' ? 'path' : 'identifier', event.shiftKey ? -1 : 1);
   }
 }
 
@@ -576,7 +580,7 @@ function applyChipClear(event) {
   if (key === 'branch') next.branch = '';
   if (key === 'author') next.author = '';
   if (key === 'pathPrefix') next.pathPrefix = '';
-  if (key === 'originPrefix') next.originPrefix = '';
+  if (key === 'identifierPrefix') next.identifierPrefix = '';
 
   writeUrlState(next);
   applyStateToControls(next);
@@ -665,7 +669,7 @@ async function fetchRows() {
   if (state.branch) params.set('branch', state.branch);
   if (state.author) params.set('author', state.author);
   if (state.pathPrefix) params.set('path_prefix', state.pathPrefix);
-  if (state.originPrefix) params.set('origin_prefix', state.originPrefix);
+  if (state.identifierPrefix) params.set('identifier_prefix', state.identifierPrefix);
   params.set('sort', state.sort);
   params.set('dir', state.dir);
 
@@ -809,15 +813,15 @@ async function init() {
     btn.addEventListener('click', () => {
       const tab = btn.getAttribute('data-tab');
       document.querySelectorAll('.tab-btn[data-tab]').forEach((b) => b.classList.toggle('is-active', b === btn));
-      originTree.classList.toggle('is-hidden', tab !== 'origin');
+      identifierTree.classList.toggle('is-hidden', tab !== 'identifier');
       pathTree.classList.toggle('is-hidden', tab !== 'path');
     });
   });
 
   pathTree.addEventListener('click', applyTreeClick);
-  originTree.addEventListener('click', applyTreeClick);
+  identifierTree.addEventListener('click', applyTreeClick);
   pathTree.addEventListener('keydown', applyTreeKeyboard);
-  originTree.addEventListener('keydown', applyTreeKeyboard);
+  identifierTree.addEventListener('keydown', applyTreeKeyboard);
   activeFilters.addEventListener('click', applyChipClear);
   bindInteractiveHandlers(rowsTable);
   bindInteractiveHandlers(repoDetails);
