@@ -141,8 +141,11 @@ func (m model) renderRepos(width, height int) string {
 		if i == m.repoIndex {
 			cursor = ">"
 		}
-		summary := r.Path
-		if r.Branch != "" {
+		summary := compactPathLabel(r.Path, 2)
+		if m.treeKind == treeIdentifier {
+			summary = compactIdentifierLabel(r.Identifier, 2)
+		}
+		if m.treeKind == treePath && r.Branch != "" {
 			summary += " [" + r.Branch + "]"
 		}
 		summary = truncateText(summary, max(10, width-6))

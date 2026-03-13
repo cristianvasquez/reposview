@@ -2,6 +2,27 @@ package main
 
 import "testing"
 
+func TestCompactPathLabel(t *testing.T) {
+	got := compactPathLabel("/workspace/src/example/reposview", 2)
+	if got != "example/reposview" {
+		t.Fatalf("compactPathLabel = %q, want example/reposview", got)
+	}
+}
+
+func TestCompactIdentifierLabel(t *testing.T) {
+	got := compactIdentifierLabel("git@github.com:cristianvasquez/reposview.git", 2)
+	if got != "cristianvasquez/reposview" {
+		t.Fatalf("compactIdentifierLabel = %q, want cristianvasquez/reposview", got)
+	}
+}
+
+func TestIdentifierToBrowserURL(t *testing.T) {
+	got := identifierToBrowserURL("git@github.com:cristianvasquez/reposview.git")
+	if got != "https://github.com/cristianvasquez/reposview" {
+		t.Fatalf("identifierToBrowserURL = %q, want https://github.com/cristianvasquez/reposview", got)
+	}
+}
+
 func TestHandleRowsMsgUsesInitialPathFilter(t *testing.T) {
 	m := newModel(&apiClient{base: "http://example.test"}, "/repos/b")
 	msg := rowsMsg{

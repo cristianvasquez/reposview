@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os/exec"
 	"strings"
 	"time"
 )
@@ -71,6 +72,28 @@ func (c *apiClient) openTerminal(path string) error {
 		return errors.New(out.Error)
 	}
 	return nil
+}
+
+func (c *apiClient) openBrowser(rawURL string) error {
+	target := strings.TrimSpace(rawURL)
+	if target == "" {
+		return errors.New("browser target is empty")
+	}
+
+	candidates := []string{"xdg-open", "open"}
+	for _, name := range candidates {
+		path, err := exec.LookPath(name)
+		if err != nil {
+			continue
+		}
+		cmd := exec.Command(path, target)
+		if err := cmd.Start(); err != nil {
+			return err
+		}
+		return nil
+	}
+
+	return errors.New("no supported browser opener found")
 }
 
 func (c *apiClient) getJSON(path string, out any) error {

@@ -113,7 +113,7 @@ func (m model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if key.Matches(msg, m.keys.IdentTree) {
 		return m.switchTreeMode(treeIdentifier)
 	}
-	if key.Matches(msg, m.keys.CycleTree) && m.focus == focusTree && !m.filtering {
+	if key.Matches(msg, m.keys.CycleTree) && (m.focus == focusTree || m.focus == focusRepos) && !m.filtering {
 		if m.treeKind == treePath {
 			return m.switchTreeMode(treeIdentifier)
 		}
@@ -202,7 +202,6 @@ func (m model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (m model) switchTreeMode(kind treeMode) (tea.Model, tea.Cmd) {
 	m.treeKind = kind
-	m.focus = focusTree
 	m.anchorTreeModeToSelectedRepo(kind)
 	if m.filtering {
 		m.filterInput.SetValue(m.currentPaneFilterValue())
@@ -332,8 +331,26 @@ func (m model) updateRepos(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.syncPreviewContent()
 		return m, m.fetchDetailsForSelection()
 	case "enter":
-		m.pivotTreesToRow(m.selectedRow(), true)
-		return m, m.fetchDetailsForSelection()
+		sel := m.selectedRow()
+		m.pivotTreesToRow(sel, true)
+		if sel.Path == "" {
+			return m, nil
+		}
+		if m.treeKind == treePath {
+			return m, func() tea.Msg {
+				err := m.client.openTerminal(sel.Path)
+				return actionMsg{label: "Opened yazi for " + sel.Path, err: err}
+			}
+		}
+		target := identifierToBrowserURL(sel.Identifier)
+		if target == "" {
+			m.statusLine = "Selected repository has no browser link"
+			return m, m.fetchDetailsForSelection()
+		}
+		return m, func() tea.Msg {
+			err := m.client.openBrowser(target)
+			return actionMsg{label: "Opened " + target, err: err}
+		}
 	}
 	return m, nil
 }

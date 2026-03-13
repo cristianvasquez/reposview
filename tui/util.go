@@ -1,6 +1,9 @@
 package main
 
 import (
+	"net/url"
+	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 )
@@ -124,6 +127,94 @@ func emptyFallback(v string) string {
 		return "(none)"
 	}
 	return v
+}
+
+func compactPathLabel(pathValue string, segments int) string {
+	normalized := filepath.ToSlash(strings.TrimSpace(pathValue))
+	if normalized == "" {
+		return "(none)"
+	}
+	parts := strings.FieldsFunc(normalized, func(r rune) bool { return r == '/' })
+	if len(parts) == 0 {
+		return normalized
+	}
+	if segments <= 0 || len(parts) <= segments {
+		return strings.Join(parts, "/")
+	}
+	return strings.Join(parts[len(parts)-segments:], "/")
+}
+
+func compactIdentifierLabel(identifier string, segments int) string {
+	raw := strings.TrimSpace(identifier)
+	if raw == "" {
+		return "(none)"
+	}
+	if strings.HasPrefix(raw, "local:") {
+		localParts := []string{"local", strings.TrimPrefix(raw, "local:")}
+		if segments <= 0 || len(localParts) <= segments {
+			return strings.Join(localParts, "/")
+		}
+		return strings.Join(localParts[len(localParts)-segments:], "/")
+	}
+
+	if parsed := identifierPathParts(raw); len(parsed) > 0 {
+		if segments <= 0 || len(parsed) <= segments {
+			return strings.Join(parsed, "/")
+		}
+		return strings.Join(parsed[len(parsed)-segments:], "/")
+	}
+
+	return raw
+}
+
+func identifierToBrowserURL(identifier string) string {
+	raw := strings.TrimSpace(identifier)
+	if raw == "" || strings.HasPrefix(raw, "local:") {
+		return ""
+	}
+	if strings.HasPrefix(raw, "http://") || strings.HasPrefix(raw, "https://") {
+		return raw
+	}
+
+	scpLike := regexp.MustCompile(`^[^@]+@([^:/\s]+):(.+)$`).FindStringSubmatch(raw)
+	if len(scpLike) == 3 {
+		host := scpLike[1]
+		path := strings.TrimPrefix(strings.TrimSuffix(scpLike[2], ".git"), "/")
+		if host != "" && path != "" {
+			return "https://" + host + "/" + path
+		}
+	}
+
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return ""
+	}
+	switch parsed.Scheme {
+	case "ssh", "git":
+		path := strings.TrimPrefix(strings.TrimSuffix(parsed.Path, ".git"), "/")
+		if parsed.Hostname() != "" && path != "" {
+			return "https://" + parsed.Hostname() + "/" + path
+		}
+	case "http", "https":
+		return raw
+	}
+	return ""
+}
+
+func identifierPathParts(identifier string) []string {
+	browserURL := identifierToBrowserURL(identifier)
+	if browserURL == "" {
+		return nil
+	}
+	parsed, err := url.Parse(browserURL)
+	if err != nil {
+		return nil
+	}
+	path := strings.TrimPrefix(strings.TrimSuffix(parsed.Path, ".git"), "/")
+	if path == "" {
+		return nil
+	}
+	return strings.FieldsFunc(path, func(r rune) bool { return r == '/' })
 }
 
 func clampPane(p focusPane) focusPane {
