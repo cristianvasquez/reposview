@@ -7,6 +7,7 @@ import { spawn } from 'node:child_process';
 import { DatabaseSync } from 'node:sqlite';
 import { DEFAULT_SYNC_OPTIONS, commandExists, runSync, reindexRepositoryByPath, deleteRepositoryByPath } from './sync-core.mjs';
 import { identifierDisplayFromRow, identifierKeyFromRow } from './resolve-identifier.mjs';
+import { launcherConfig } from '../config/launchers.mjs';
 
 function parseArgs(argv) {
   const opts = {
@@ -76,24 +77,55 @@ function qParam(url, key, fallback = '') {
   return value === null ? fallback : value;
 }
 
-function launchTerminalAtDir(dirPath) {
-  if (!commandExists('yazi')) {
-    return { ok: false, error: 'yazi command not found' };
+function spawnDetached(cmd, args, dirPath, options = {}) {
+  const child = spawn(cmd, args, {
+    detached: true,
+    stdio: 'ignore',
+    cwd: dirPath,
+    env: options.env || process.env
+  });
+  child.unref();
+  return { ok: true, command: cmd };
+}
+
+function envWithUnsets(unsetNames = []) {
+  const env = { ...process.env };
+  for (const key of unsetNames) {
+    delete env[key];
+  }
+  return env;
+}
+
+function fillLauncherArgs(args, dirPath) {
+  return args.map((arg) => String(arg).replaceAll('{dir}', dirPath));
+}
+
+function launchFromConfig(config, dirPath) {
+  const required = Array.isArray(config?.requires) ? config.requires : [];
+  for (const requirement of required) {
+    if (!commandExists(requirement)) {
+      return { ok: false, error: `${requirement} command not found` };
+    }
   }
 
-  const candidates = [
-    ['ghostty', [`--working-directory=${dirPath}`, '--gtk-single-instance=false', '-e', 'yazi', dirPath]],
-    ['gnome-terminal', [`--working-directory=${dirPath}`, '--', 'yazi', dirPath]]
-  ];
-
-  for (const [cmd, args] of candidates) {
-    if (!commandExists(cmd)) continue;
-    const child = spawn(cmd, args, { detached: true, stdio: 'ignore', cwd: dirPath });
-    child.unref();
-    return { ok: true, command: cmd };
+  const launchers = Array.isArray(config?.launchers) ? config.launchers : [];
+  for (const launcher of launchers) {
+    const cmd = String(launcher?.command || '').trim();
+    if (!cmd || !commandExists(cmd)) continue;
+    const args = fillLauncherArgs(Array.isArray(launcher?.args) ? launcher.args : [], dirPath);
+    const unsetEnv = Array.isArray(launcher?.unsetEnv) ? launcher.unsetEnv : [];
+    return spawnDetached(cmd, args, dirPath, { env: envWithUnsets(unsetEnv) });
   }
 
   return { ok: false, error: 'no supported terminal command found' };
+}
+
+function launchTerminalAtDir(dirPath) {
+  return launchFromConfig(launcherConfig.terminal, dirPath);
+}
+
+function launchYaziAtDir(dirPath) {
+  return launchFromConfig(launcherConfig.yazi, dirPath);
 }
 
 async function readJsonBody(req, maxBytes = 64 * 1024) {
@@ -605,6 +637,31 @@ async function main() {
       }
 
       const launched = launchTerminalAtDir(resolved);
+      res.statusCode = launched.ok ? 200 : 500;
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.end(JSON.stringify({ opened: launched.ok, path: resolved, ...launched }));
+      return;
+    }
+
+    if (url.pathname === '/actions/open-yazi') {
+      if (req.method !== 'POST') {
+        res.statusCode = 405;
+        res.end('method not allowed');
+        return;
+      }
+
+      const body = await readJsonBody(req);
+      const rawPath = String(body?.path || '').trim();
+      const resolved = path.resolve(rawPath);
+
+      if (!rawPath || !path.isAbsolute(resolved) || !fs.existsSync(resolved) || !fs.statSync(resolved).isDirectory()) {
+        res.statusCode = 400;
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        res.end(JSON.stringify({ opened: false, error: 'invalid path' }));
+        return;
+      }
+
+      const launched = launchYaziAtDir(resolved);
       res.statusCode = launched.ok ? 200 : 500;
       res.setHeader('Content-Type', 'application/json; charset=utf-8');
       res.end(JSON.stringify({ opened: launched.ok, path: resolved, ...launched }));

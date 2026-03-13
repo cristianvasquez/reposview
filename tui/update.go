@@ -338,7 +338,7 @@ func (m model) updateRepos(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		if m.treeKind == treePath {
 			return m, func() tea.Msg {
-				err := m.client.openTerminal(sel.Path)
+				err := m.client.openYazi(sel.Path)
 				return actionMsg{label: "Opened yazi for " + sel.Path, err: err}
 			}
 		}

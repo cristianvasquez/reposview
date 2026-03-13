@@ -74,6 +74,18 @@ func (c *apiClient) openTerminal(path string) error {
 	return nil
 }
 
+func (c *apiClient) openYazi(path string) error {
+	body := map[string]string{"path": path}
+	var out actionResponse
+	if err := c.postJSON("/actions/open-yazi", body, &out); err != nil {
+		return err
+	}
+	if !out.Opened && out.Error != "" {
+		return errors.New(out.Error)
+	}
+	return nil
+}
+
 func (c *apiClient) openBrowser(rawURL string) error {
 	target := strings.TrimSpace(rawURL)
 	if target == "" {
