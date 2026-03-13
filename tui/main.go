@@ -326,6 +326,7 @@ type model struct {
 	totalCount    int
 	databaseTotal int
 	facets        facets
+	allTreeItems  map[treeMode][]treeItem
 	treeItems     map[treeMode][]treeItem
 
 	repoIndex        int
@@ -337,6 +338,7 @@ type model struct {
 	lastDetails      repoDetailsResponse
 	lastStatus       syncStatus
 	lastRunAt        string
+	filterOriginal   string
 
 	statusLine string
 	errLine    string
@@ -364,6 +366,10 @@ func newModel(client *apiClient) model {
 		preview:     preview,
 		focus:       focusTree,
 		treeKind:    treePath,
+		allTreeItems: map[treeMode][]treeItem{
+			treePath:       {},
+			treeIdentifier: {},
+		},
 		treeItems: map[treeMode][]treeItem{
 			treePath:       {},
 			treeIdentifier: {},
@@ -458,11 +464,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.totalCount = msg.data.TotalCount
 		m.databaseTotal = msg.data.DatabaseTotal
 		m.facets = msg.data.Facets
-		m.treeItems[treePath] = buildTreeItems(msg.data.Facets.LocalPathTree)
-		m.treeItems[treeIdentifier] = buildTreeItems(msg.data.Facets.IdentifierTree)
-		for _, kind := range []treeMode{treePath, treeIdentifier} {
-			m.treeItems[kind] = filterTreeItems(m.treeItems[kind], m.treePaneFilter[kind])
-		}
+		m.allTreeItems[treePath] = buildTreeItems(msg.data.Facets.LocalPathTree)
+		m.allTreeItems[treeIdentifier] = buildTreeItems(msg.data.Facets.IdentifierTree)
+		m.applyTreePaneFilters()
 		m.repoIndex = clamp(m.repoIndex, 0, max(0, len(m.rows)-1))
 		for _, kind := range []treeMode{treePath, treeIdentifier} {
 			m.treeIndex[kind] = alignTreeCursor(m.visibleTreeItems(kind), m.activeTreeFilter[kind], m.treeIndex[kind])
@@ -546,25 +550,23 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			var cmd tea.Cmd
 			m.filterInput, cmd = m.filterInput.Update(msg)
 			if key.Matches(msg, m.keys.Cancel) {
+				m.setCurrentPaneFilterValue(m.filterOriginal)
 				m.filtering = false
-				m.filterInput.SetValue(m.currentPaneFilterValue())
+				m.filterInput.SetValue(m.filterOriginal)
+				m.applyCurrentPaneFilter()
 				m.applyFocus()
-				return m, nil
+				return m, m.filterChangeCmd()
 			}
 			if key.Matches(msg, m.keys.Apply) {
-				value := strings.TrimSpace(m.filterInput.Value())
-				m.setCurrentPaneFilterValue(value)
+				m.applyCurrentPaneFilter()
 				m.filtering = false
 				m.applyFocus()
-				if m.focus == focusRepos || m.focus == focusTree {
-					return m, tea.Batch(m.fetchRowsCmd(), m.fetchDetailsForSelection())
-				}
-				return m, nil
+				return m, m.filterChangeCmd()
 			}
 			if m.filterInput.Value() != before {
-				if m.focus == focusTree {
-					return m, nil
-				}
+				m.setCurrentPaneFilterValue(strings.TrimSpace(m.filterInput.Value()))
+				m.applyCurrentPaneFilter()
+				return m, tea.Batch(cmd, m.filterChangeCmd())
 			}
 			return m, cmd
 		}
@@ -584,6 +586,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			m.filtering = true
+			m.filterOriginal = m.currentPaneFilterValue()
 			m.filterInput.SetValue(m.currentPaneFilterValue())
 			m.filterInput.CursorEnd()
 			m.applyFocus()
@@ -733,6 +736,33 @@ func (m *model) setCurrentPaneFilterValue(value string) {
 	}
 }
 
+func (m *model) applyCurrentPaneFilter() {
+	switch m.focus {
+	case focusTree:
+		m.applyTreePaneFilters()
+		m.treeIndex[m.treeKind] = alignTreeCursor(m.visibleTreeItems(m.treeKind), m.activeTreeFilter[m.treeKind], m.treeIndex[m.treeKind])
+	case focusRepos:
+		m.repoIndex = 0
+	}
+}
+
+func (m model) filterChangeCmd() tea.Cmd {
+	switch m.focus {
+	case focusTree:
+		return nil
+	case focusRepos:
+		return m.fetchRowsCmd()
+	default:
+		return nil
+	}
+}
+
+func (m *model) applyTreePaneFilters() {
+	for _, kind := range []treeMode{treePath, treeIdentifier} {
+		m.treeItems[kind] = filterTreeItems(m.allTreeItems[kind], m.treePaneFilter[kind])
+	}
+}
+
 func (m model) selectedTreeItem(kind treeMode) treeItem {
 	items := m.visibleTreeItems(kind)
 	if len(items) == 0 {
@@ -850,7 +880,11 @@ func (m model) renderFilterBar(width int) string {
 	}
 	contentWidth := max(10, width-6)
 	if m.filtering {
-		return style.Render(truncateText(label+": "+m.filterInput.View(), contentWidth))
+		content := label + ": " + m.filterInput.Value()
+		if m.filterInput.Cursor.Blink {
+			content += "_"
+		}
+		return style.Render(truncateText(content, contentWidth))
 	}
 	if current == "" {
 		current = "(none)"
@@ -861,14 +895,12 @@ func (m model) renderFilterBar(width int) string {
 func (m model) renderTree(width, height int) string {
 	items := m.visibleTreeItems(m.treeKind)
 	lines := make([]string, 0, height)
-	pathLabel := " path "
-	identLabel := " identifier "
+	pathLabel := "path"
+	identLabel := "identifier"
 	if m.treeKind == treePath {
-		pathLabel = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("86")).Render("[PATH]")
-		identLabel = lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render(" identifier ")
+		pathLabel = "[PATH]"
 	} else {
-		pathLabel = lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render(" path ")
-		identLabel = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("86")).Render("[IDENTIFIER]")
+		identLabel = "[IDENTIFIER]"
 	}
 	title := fmt.Sprintf("Tree %s | %s", pathLabel, identLabel)
 	active := m.currentTreeSelectionPrefix(m.treeKind)
