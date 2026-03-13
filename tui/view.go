@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/reflow/truncate"
 )
 
 var (
@@ -33,6 +34,9 @@ func (m model) View() string {
 	footerText := m.errLine
 	if footerText == "" {
 		footerText = m.statusLine
+	}
+	if footerText == "" {
+		footerText = m.promptLine
 	}
 	footer := panelStyle(false).Width(m.width - 2).Render(truncateText(footerText, max(10, m.width-6)))
 	helpView := lipgloss.NewStyle().Width(m.width).Render(m.help.View(m.keys))
@@ -219,14 +223,7 @@ func truncateText(s string, width int) string {
 	if width <= 0 {
 		return ""
 	}
-	runes := []rune(strings.ReplaceAll(s, "\n", " "))
-	if len(runes) <= width {
-		return string(runes)
-	}
-	if width == 1 {
-		return string(runes[:1])
-	}
-	return string(runes[:width-1]) + "…"
+	return truncate.StringWithTail(strings.ReplaceAll(s, "\n", " "), uint(width), "…")
 }
 
 func relativeTime(iso string) string {

@@ -176,6 +176,12 @@ type actionMsg struct {
 	err   error
 }
 
+type promptMsg struct {
+	path   string
+	prompt string
+	err    error
+}
+
 type fzfResultMsg struct {
 	focus     focusPane
 	treeKind  treeMode
@@ -221,6 +227,7 @@ type model struct {
 	filterOriginal   string
 
 	statusLine string
+	promptLine string
 	errLine    string
 	loading    bool
 }

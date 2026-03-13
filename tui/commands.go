@@ -57,9 +57,18 @@ func (m model) fetchDetailsForSelection() tea.Cmd {
 	return m.fetchDetailsCmd(sel.Path)
 }
 
+func (m model) fetchPromptForSelection() tea.Cmd {
+	sel := m.selectedRow()
+	if sel.Path == "" {
+		return nil
+	}
+	width := max(20, m.width-6)
+	return renderPromptCmd(sel, width)
+}
+
 func (m model) afterFilterChangeCmd() tea.Cmd {
 	if m.focus == focusTree {
-		return tea.Batch(m.fetchRowsCmd(), m.fetchDetailsForSelection())
+		return tea.Batch(m.fetchRowsCmd(), m.fetchDetailsForSelection(), m.fetchPromptForSelection())
 	}
-	return m.fetchDetailsForSelection()
+	return tea.Batch(m.fetchDetailsForSelection(), m.fetchPromptForSelection())
 }

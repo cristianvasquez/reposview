@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
@@ -13,7 +14,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		m.resize()
-		return m, nil
+		return m, m.fetchPromptForSelection()
 
 	case tickMsg:
 		return m, tea.Batch(m.fetchStatusCmd(), tickCmd())
@@ -28,6 +29,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.lastDetails = msg.data
 		}
 		m.syncPreviewContent()
+		return m, nil
+
+	case promptMsg:
+		if msg.path != strings.TrimSpace(m.selectedRow().Path) {
+			return m, nil
+		}
+		if msg.prompt != "" {
+			m.promptLine = msg.prompt
+		}
 		return m, nil
 
 	case statusMsg:
@@ -95,10 +105,10 @@ func (m model) handleRowsMsg(msg rowsMsg) (tea.Model, tea.Cmd) {
 	if m.activeTreeFilter[m.treeKind] == "" {
 		m.activeTreeFilter[m.treeKind] = m.currentTreeSelectionPrefix(m.treeKind)
 	}
-	m.statusLine = fmt.Sprintf("Loaded %d/%d repos", len(m.rows), m.totalCount)
+	m.statusLine = ""
 	m.syncPreviewContent()
 	if sel := m.selectedRow(); sel.Path != "" {
-		return m, m.fetchDetailsCmd(sel.Path)
+		return m, tea.Batch(m.fetchDetailsCmd(sel.Path), m.fetchPromptForSelection())
 	}
 	return m, nil
 }
@@ -180,8 +190,11 @@ func (m model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.setCurrentPaneFilterValue("")
 			m.applyCurrentPaneFilter()
 			if m.focus == focusTree {
-				return m, tea.Batch(m.fetchRowsCmd(), m.fetchDetailsForSelection())
+				m.statusLine = ""
+				return m, tea.Batch(m.fetchRowsCmd(), m.fetchDetailsForSelection(), m.fetchPromptForSelection())
 			}
+			m.statusLine = ""
+			return m, tea.Batch(m.fetchDetailsForSelection(), m.fetchPromptForSelection())
 		}
 		return m, nil
 	}
@@ -209,7 +222,8 @@ func (m model) switchTreeMode(kind treeMode) (tea.Model, tea.Cmd) {
 	}
 	m.applyFocus()
 	m.syncPreviewContent()
-	return m, nil
+	m.statusLine = ""
+	return m, m.fetchPromptForSelection()
 }
 
 func (m model) handleFzfResult(msg fzfResultMsg) (tea.Model, tea.Cmd) {
@@ -252,8 +266,8 @@ func (m model) handleFzfResult(msg fzfResultMsg) (tea.Model, tea.Cmd) {
 				m.pivotTreesToRow(m.selectedRow(), true)
 				m.applyFocus()
 				m.syncPreviewContent()
-				m.statusLine = "repo jump: " + msg.selection
-				return m, m.fetchDetailsForSelection()
+				m.statusLine = ""
+				return m, tea.Batch(m.fetchDetailsForSelection(), m.fetchPromptForSelection())
 			}
 		}
 		for i, repo := range m.allRows {
@@ -264,8 +278,8 @@ func (m model) handleFzfResult(msg fzfResultMsg) (tea.Model, tea.Cmd) {
 				m.pivotTreesToRow(m.selectedRow(), true)
 				m.applyFocus()
 				m.syncPreviewContent()
-				m.statusLine = "repo jump: " + msg.selection
-				return m, m.fetchDetailsForSelection()
+				m.statusLine = ""
+				return m, tea.Batch(m.fetchDetailsForSelection(), m.fetchPromptForSelection())
 			}
 		}
 		m.pivotTreesToRow(m.selectedRow(), true)
@@ -288,15 +302,17 @@ func (m model) updateTree(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "up", "k":
 		m.treeIndex[m.treeKind] = clamp(index-1, 0, len(items)-1)
 		m.activeTreeFilter[m.treeKind] = m.currentTreeSelectionPrefix(m.treeKind)
-		return m, tea.Batch(m.fetchRowsCmd(), m.fetchDetailsForSelection())
+		m.statusLine = ""
+		return m, tea.Batch(m.fetchRowsCmd(), m.fetchDetailsForSelection(), m.fetchPromptForSelection())
 	case "down", "j":
 		m.treeIndex[m.treeKind] = clamp(index+1, 0, len(items)-1)
 		m.activeTreeFilter[m.treeKind] = m.currentTreeSelectionPrefix(m.treeKind)
-		return m, tea.Batch(m.fetchRowsCmd(), m.fetchDetailsForSelection())
+		m.statusLine = ""
+		return m, tea.Batch(m.fetchRowsCmd(), m.fetchDetailsForSelection(), m.fetchPromptForSelection())
 	case "enter":
 		m.activeTreeFilter[m.treeKind] = m.currentTreeSelectionPrefix(m.treeKind)
-		m.statusLine = fmt.Sprintf("%s selection: %s", m.treeKind, m.activeTreeFilter[m.treeKind])
-		return m, tea.Batch(m.fetchRowsCmd(), m.fetchDetailsForSelection())
+		m.statusLine = ""
+		return m, tea.Batch(m.fetchRowsCmd(), m.fetchDetailsForSelection(), m.fetchPromptForSelection())
 	case " ":
 		current := items[clamp(index, 0, len(items)-1)]
 		data := m.treeData[m.treeKind]
@@ -324,12 +340,14 @@ func (m model) updateRepos(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.setSelectedRepoIndex(clamp(m.repoIndex-1, 0, len(m.rows)-1))
 		m.pivotTreesToRow(m.selectedRow(), true)
 		m.syncPreviewContent()
-		return m, m.fetchDetailsForSelection()
+		m.statusLine = ""
+		return m, tea.Batch(m.fetchDetailsForSelection(), m.fetchPromptForSelection())
 	case "down", "j":
 		m.setSelectedRepoIndex(clamp(m.repoIndex+1, 0, len(m.rows)-1))
 		m.pivotTreesToRow(m.selectedRow(), true)
 		m.syncPreviewContent()
-		return m, m.fetchDetailsForSelection()
+		m.statusLine = ""
+		return m, tea.Batch(m.fetchDetailsForSelection(), m.fetchPromptForSelection())
 	case "enter":
 		sel := m.selectedRow()
 		m.pivotTreesToRow(sel, true)
