@@ -10,10 +10,14 @@ import (
 )
 
 var (
-	titleStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("212"))
-	metaStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
-	activeText = lipgloss.NewStyle().Foreground(lipgloss.Color("229"))
-	repoText   = lipgloss.NewStyle().Foreground(lipgloss.Color("86"))
+	titleStyle         = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("212"))
+	metaStyle          = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+	activeText         = lipgloss.NewStyle().Foreground(lipgloss.Color("229"))
+	repoText           = lipgloss.NewStyle().Foreground(lipgloss.Color("86"))
+	previewHeaderStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("223"))
+	previewLabelStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("109"))
+	previewValueStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
+	previewMutedStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
 )
 
 func (m model) View() string {
@@ -113,21 +117,13 @@ func (m model) renderTree(width, height int) string {
 	start, end := windowBounds(index, len(items), height-2)
 	for i := start; i < end; i++ {
 		item := items[i]
-		cursor := " "
-		if i == index {
-			cursor = ">"
-		}
-		activeMarker := " "
-		if item.Prefix == active {
-			activeMarker = "*"
-		}
 		indent := strings.Repeat("  ", max(0, item.Depth-1))
 		label := fmt.Sprintf("%s%s%s (%d)", indent, m.treeGlyph(m.treeKind, item), item.Label, item.Count)
-		label = truncateText(label, max(8, width-6))
+		label = truncateText(label, max(8, width-3))
 		if i == index {
 			label = activeText.Render(label)
 		}
-		lines = append(lines, cursor+activeMarker+" "+label)
+		lines = append(lines, label)
 	}
 	return panelStyle(m.focus == focusTree).Width(width).Height(height).Render(strings.Join(lines, "\n"))
 }
@@ -141,10 +137,6 @@ func (m model) renderRepos(width, height int) string {
 	start, end := windowBounds(m.repoIndex, len(m.rows), height-2)
 	for i := start; i < end; i++ {
 		r := m.rows[i]
-		cursor := " "
-		if i == m.repoIndex {
-			cursor = ">"
-		}
 		summary := compactPathLabel(r.Path, 2)
 		if m.treeKind == treeIdentifier {
 			summary = compactIdentifierLabel(r.Identifier, 2)
@@ -152,17 +144,17 @@ func (m model) renderRepos(width, height int) string {
 		if m.treeKind == treePath && r.Branch != "" {
 			summary += " [" + r.Branch + "]"
 		}
-		summary = truncateText(summary, max(10, width-6))
+		summary = truncateText(summary, max(10, width-3))
 		if i == m.repoIndex {
 			summary = repoText.Render(summary)
 		}
-		lines = append(lines, cursor+" "+summary)
+		lines = append(lines, summary)
 	}
 	return panelStyle(m.focus == focusRepos).Width(width).Height(height).Render(strings.Join(lines, "\n"))
 }
 
 func (m model) renderPreview(width, height int) string {
-	header := "Preview"
+	header := previewHeaderStyle.Render("Details")
 	content := m.preview.View()
 	return panelStyle(m.focus == focusPreview).Width(width).Height(height).Render(header + "\n" + content)
 }

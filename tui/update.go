@@ -87,7 +87,7 @@ func (m model) handleRowsMsg(msg rowsMsg) (tea.Model, tea.Cmd) {
 	m.facets = msg.data.Facets
 
 	pathTree := m.treeData[treePath]
-	pathTree.setItems(buildTreeItems(msg.data.Facets.LocalPathTree))
+	pathTree.setItems(compactPathTreeItems(buildTreeItems(msg.data.Facets.LocalPathTree)))
 	m.treeData[treePath] = pathTree
 
 	identifierTree := m.treeData[treeIdentifier]

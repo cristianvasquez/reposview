@@ -2,6 +2,7 @@ package main
 
 import (
 	"net/url"
+	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -142,6 +143,14 @@ func compactPathLabel(pathValue string, segments int) string {
 		return strings.Join(parts, "/")
 	}
 	return strings.Join(parts[len(parts)-segments:], "/")
+}
+
+func userHomePath() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return normalizePathForMatch(home)
 }
 
 func compactIdentifierLabel(identifier string, segments int) string {

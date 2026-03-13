@@ -159,6 +159,39 @@ func buildTreeItems(nodes []treeNode) []treeItem {
 	return orphans
 }
 
+func compactPathTreeItems(items []treeItem) []treeItem {
+	if len(items) == 0 {
+		return items
+	}
+
+	home := userHomePath()
+	if home == "" {
+		return items
+	}
+
+	compacted := make([]treeItem, 0, len(items))
+	for _, item := range items {
+		prefix := normalizePathForMatch(item.Prefix)
+		next := item
+		switch {
+		case prefix == home:
+			next.Label = "~"
+		case pathMatchesPrefix(prefix, home):
+			next.Depth = max(1, item.Depth-1)
+			parent := normalizePathForMatch(item.ParentPrefix)
+			switch {
+			case parent == home:
+				next.ParentPrefix = ""
+			case pathMatchesPrefix(parent, home):
+				next.ParentPrefix = parent
+			}
+		}
+		compacted = append(compacted, next)
+	}
+
+	return compacted
+}
+
 func alignTreeCursor(items []treeItem, activePrefix string, fallback int) int {
 	if len(items) == 0 {
 		return 0

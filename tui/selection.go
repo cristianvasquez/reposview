@@ -1,6 +1,8 @@
 package main
 
-import "strings"
+import (
+	"strings"
+)
 
 func (m *model) resize() {
 	if m.width <= 0 || m.height <= 0 {
@@ -50,42 +52,52 @@ func (m model) selectedRow() row {
 func (m *model) syncPreviewContent() {
 	sel := m.selectedRow()
 	if sel.Path == "" {
-		m.preview.SetContent("No repository selected.")
+		m.preview.SetContent(previewMutedStyle.Render("No repository selected."))
 		return
 	}
 	lines := []string{
-		"path: " + sel.Path,
-		"identifier: " + emptyFallback(sel.Identifier),
-		"branch: " + emptyFallback(sel.Branch),
-		"author: " + emptyFallback(sel.LastCommitAuthor),
-		"last commit: " + emptyFallback(sel.LastCommitAt),
-		"last seen: " + emptyFallback(sel.LastSeenAt),
+		previewField("identifier", emptyFallback(sel.Identifier)),
+		previewField("author", emptyFallback(sel.LastCommitAuthor)),
+		previewField("last commit", emptyFallback(sel.LastCommitAt)),
 		"",
+		previewDivider(max(10, m.preview.Width)),
 	}
 
 	if m.lastDetails.Path != sel.Path {
-		lines = append(lines, "README: loading...")
+		lines = append(lines, previewMutedStyle.Render("Loading README..."))
 		m.preview.SetContent(strings.Join(lines, "\n"))
 		return
 	}
 
 	if !m.lastDetails.OK && m.lastDetails.Error != "" {
-		lines = append(lines, "details error: "+m.lastDetails.Error)
+		lines = append(lines, previewMutedStyle.Render("Details error"))
+		lines = append(lines, previewValueBlock(m.lastDetails.Error))
 		m.preview.SetContent(strings.Join(lines, "\n"))
 		return
 	}
 
 	if m.lastDetails.Readme.Exists {
-		lines = append(lines, "README: "+m.lastDetails.Readme.Path, "")
 		lines = append(lines, stripMarkdown(m.lastDetails.Readme.Content))
 		if m.lastDetails.Readme.Truncated {
-			lines = append(lines, "", "[README truncated]")
+			lines = append(lines, "", previewMutedStyle.Render("[README truncated]"))
 		}
 	} else {
-		lines = append(lines, "README: not found")
+		lines = append(lines, previewMutedStyle.Render("README not found."))
 	}
 
 	m.preview.SetContent(strings.Join(lines, "\n"))
+}
+
+func previewField(label string, value string) string {
+	return previewLabelStyle.Render(label) + "\n" + previewValueBlock(value)
+}
+
+func previewValueBlock(value string) string {
+	return previewValueStyle.Render(value)
+}
+
+func previewDivider(width int) string {
+	return previewMutedStyle.Render(strings.Repeat("─", width))
 }
 
 func (m *model) syncPivotTreeToRow(selected row) {
