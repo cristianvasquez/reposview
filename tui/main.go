@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -14,6 +15,11 @@ func main() {
 	dbPath := flag.String("db", "", "SQLite database path for spawned API (default: ../data/reposview.sqlite)")
 	scanner := flag.String("scanner", "auto", "Scanner mode for spawned API")
 	flag.Parse()
+	initialPathFilter, err := resolveSelectionTarget(flag.Args())
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
 
 	client := newAPIClient(*apiOrigin)
 	server, err := ensureAPI(client, *spawnAPI, *dbPath, *scanner)
@@ -25,9 +31,27 @@ func main() {
 		defer server.Stop()
 	}
 
-	p := tea.NewProgram(newModel(client), tea.WithAltScreen())
+	p := tea.NewProgram(newModel(client, initialPathFilter), tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+}
+
+func resolveSelectionTarget(args []string) (string, error) {
+	if len(args) > 1 {
+		return "", fmt.Errorf("usage: r [path]")
+	}
+	target := "."
+	if len(args) == 1 {
+		target = args[0]
+	}
+	absTarget, err := filepath.Abs(target)
+	if err != nil {
+		return "", err
+	}
+	if resolved, err := filepath.EvalSymlinks(absTarget); err == nil {
+		return resolved, nil
+	}
+	return absTarget, nil
 }

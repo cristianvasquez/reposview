@@ -225,7 +225,7 @@ type model struct {
 	loading    bool
 }
 
-func newModel(client *apiClient) model {
+func newModel(client *apiClient, initialPathFilter string) model {
 	filterInput := textinput.New()
 	filterInput.Placeholder = "filter current pane"
 	filterInput.CharLimit = 200
@@ -255,7 +255,7 @@ func newModel(client *apiClient) model {
 			treeIdentifier: 0,
 		},
 		activeTreeFilter: map[treeMode]string{
-			treePath:       "",
+			treePath:       initialPathFilter,
 			treeIdentifier: "",
 		},
 		treePaneFilter: map[treeMode]string{

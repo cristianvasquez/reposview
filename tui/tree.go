@@ -199,6 +199,24 @@ func bestTreePrefixForRow(items []treeItem, kind treeMode, selected row) string 
 	return best
 }
 
+func bestTreePrefixForPath(items []treeItem, target string) string {
+	target = normalizePathForMatch(target)
+	if target == "" {
+		return ""
+	}
+	best := ""
+	for _, item := range items {
+		prefix := normalizePathForMatch(item.Prefix)
+		if !pathMatchesPrefix(target, prefix) {
+			continue
+		}
+		if len(prefix) > len(best) {
+			best = prefix
+		}
+	}
+	return best
+}
+
 func identifierTreeKey(selected row) string {
 	upstream := strings.TrimSpace(selected.Identifier)
 	if upstream != "" {
