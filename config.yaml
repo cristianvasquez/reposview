@@ -1,0 +1,100 @@
+# Draft configuration for reposview.
+# This file is not wired yet; it defines the target shape for consolidating
+# the current scattered CLI flags, env vars, and launcher defaults.
+
+paths:
+  database: ./data/reposview.sqlite
+
+scan:
+  roots:
+    - ${HOME}
+  exclude_regex: "^${HOME_ESCAPED}/\\.[^/]+(?:/|$)"
+  scanner: auto
+
+api:
+  host: 127.0.0.1
+  port: 8787
+
+web:
+  host: 127.0.0.1
+  port: 8790
+  api_origin: null
+
+tui:
+  api_origin: ""
+  spawn_api: false
+  scanner: auto
+  database: ./data/reposview.sqlite
+  keys:
+    left:
+      - left
+    right:
+      - right
+    cycle_tree:
+      - tab
+    up:
+      - up
+    down:
+      - down
+    apply:
+      - enter
+    filter:
+      - f
+    help:
+      - "?"
+      - h
+    list:
+      - l
+    refresh:
+      - r
+    sync:
+      - s
+    open_terminal:
+      - t
+    toggle_osg:
+      - o
+    path_tree:
+      - p
+    identifier_tree:
+      - i
+    cancel:
+      - esc
+    quit:
+      - q
+      - ctrl+c
+
+operations:
+  open_terminal:
+    launchers:
+      - command: ghostty
+        args:
+          - --working-directory={dir}
+          - --gtk-single-instance=false
+        unset_env:
+          - DBUS_SESSION_BUS_ADDRESS
+      - command: gnome-terminal
+        args:
+          - --working-directory={dir}
+  open_repo:
+    requires:
+      - yazi
+    launchers:
+      - command: ghostty
+        args:
+          - --working-directory={dir}
+          - --gtk-single-instance=false
+          - -e
+          - yazi
+          - "{dir}"
+        unset_env:
+          - DBUS_SESSION_BUS_ADDRESS
+      - command: gnome-terminal
+        args:
+          - --working-directory={dir}
+          - --
+          - yazi
+          - "{dir}"
+  open_web:
+    commands:
+      - xdg-open
+      - open

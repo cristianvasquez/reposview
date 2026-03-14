@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -79,21 +78,19 @@ func startInspectServer(apiOrigin string, dbPath string, scanner string) (*spawn
 		return nil, fmt.Errorf("api origin must include host and port: %s", apiOrigin)
 	}
 
-	wd, err := os.Getwd()
+	repoRoot, err := discoverRepoRoot()
 	if err != nil {
 		return nil, err
 	}
-	repoRoot := filepath.Dir(wd)
+	cfg := loadAppConfig(repoRoot)
 	nodePath, err := exec.LookPath("node")
 	if err != nil {
 		return nil, errors.New("node executable not found; cannot auto-start inspect API")
 	}
 
-	if dbPath == "" {
-		dbPath = filepath.Join(repoRoot, "data", "reposview.sqlite")
-	}
-	if !filepath.IsAbs(dbPath) {
-		dbPath = filepath.Join(repoRoot, dbPath)
+	dbPath = resolveConfiguredPath(repoRoot, dbPath, cfg.TUI.Database)
+	if strings.TrimSpace(scanner) == "" {
+		scanner = cfg.TUI.Scanner
 	}
 
 	scriptPath := filepath.Join(repoRoot, "scripts", "inspect-table.mjs")

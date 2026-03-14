@@ -1,6 +1,7 @@
 import { defineConfig } from 'vite';
+import { getWebAPIOrigin, loadConfigSync } from './scripts/config.mjs';
 
-const apiOrigin = process.env.REPOSVIEW_API_ORIGIN || 'http://127.0.0.1:8787';
+const apiOrigin = process.env.REPOSVIEW_API_ORIGIN || getWebAPIOrigin(loadConfigSync());
 
 export default defineConfig({
   root: 'web',

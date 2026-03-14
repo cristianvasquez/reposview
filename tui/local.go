@@ -23,6 +23,7 @@ type localBackend struct {
 	repoRoot string
 	dbPath   string
 	scanner  string
+	config   appConfig
 
 	mu         sync.Mutex
 	syncState  syncStatus
@@ -65,16 +66,17 @@ func newLocalAPIClient(dbPath string, scanner string) (*apiClient, error) {
 	if err != nil {
 		return nil, err
 	}
-	if dbPath == "" {
-		dbPath = filepath.Join(repoRoot, "data", "reposview.sqlite")
-	} else if !filepath.IsAbs(dbPath) {
-		dbPath = filepath.Join(repoRoot, dbPath)
+	cfg := loadAppConfig(repoRoot)
+	dbPath = resolveConfiguredPath(repoRoot, dbPath, cfg.TUI.Database)
+	if strings.TrimSpace(scanner) == "" {
+		scanner = cfg.TUI.Scanner
 	}
 
 	backend := &localBackend{
 		repoRoot: repoRoot,
 		dbPath:   dbPath,
 		scanner:  scanner,
+		config:   cfg,
 	}
 
 	return &apiClient{
@@ -418,54 +420,45 @@ func (l *localBackend) applySyncProgress(event syncProgressEvent) {
 }
 
 func (l *localBackend) openTerminal(repoPath string) error {
-	return launchTerminalAtDir(repoPath)
+	return launchTerminalAtDir(repoPath, l.config)
 }
 
 func (l *localBackend) openYazi(repoPath string) error {
-	return launchYaziAtDir(repoPath)
+	return launchYaziAtDir(repoPath, l.config)
 }
 
-func launchTerminalAtDir(dirPath string) error {
-	return launchDetachedInDir(dirPath, []launcherSpec{
-		{command: "ghostty", args: []string{"--working-directory={dir}", "--gtk-single-instance=false"}, unsetEnv: []string{"DBUS_SESSION_BUS_ADDRESS"}},
-		{command: "gnome-terminal", args: []string{"--working-directory={dir}"}},
-	})
+func launchTerminalAtDir(dirPath string, cfg appConfig) error {
+	return launchDetachedInDir(dirPath, cfg.Operations.OpenTerminal)
 }
 
-func launchYaziAtDir(dirPath string) error {
-	if _, err := exec.LookPath("yazi"); err != nil {
-		return errors.New("yazi command not found")
-	}
-	return launchDetachedInDir(dirPath, []launcherSpec{
-		{command: "ghostty", args: []string{"--working-directory={dir}", "--gtk-single-instance=false", "-e", "yazi", "{dir}"}, unsetEnv: []string{"DBUS_SESSION_BUS_ADDRESS"}},
-		{command: "gnome-terminal", args: []string{"--working-directory={dir}", "--", "yazi", "{dir}"}},
-	})
+func launchYaziAtDir(dirPath string, cfg appConfig) error {
+	return launchDetachedInDir(dirPath, cfg.Operations.OpenRepo)
 }
 
-type launcherSpec struct {
-	command  string
-	args     []string
-	unsetEnv []string
-}
-
-func launchDetachedInDir(dirPath string, specs []launcherSpec) error {
+func launchDetachedInDir(dirPath string, op operationConfig) error {
 	resolved := filepath.Clean(dirPath)
 	if !filepath.IsAbs(resolved) || !directoryExists(resolved) {
 		return errors.New("invalid path")
 	}
 
-	for _, spec := range specs {
-		cmdPath, err := exec.LookPath(spec.command)
+	for _, requirement := range op.Requires {
+		if _, err := exec.LookPath(requirement); err != nil {
+			return errors.New(requirement + " command not found")
+		}
+	}
+
+	for _, spec := range op.Launchers {
+		cmdPath, err := exec.LookPath(spec.Command)
 		if err != nil {
 			continue
 		}
-		args := make([]string, 0, len(spec.args))
-		for _, arg := range spec.args {
+		args := make([]string, 0, len(spec.Args))
+		for _, arg := range spec.Args {
 			args = append(args, strings.ReplaceAll(arg, "{dir}", resolved))
 		}
 		cmd := exec.Command(cmdPath, args...)
 		cmd.Dir = resolved
-		cmd.Env = envWithout(spec.unsetEnv)
+		cmd.Env = envWithout(spec.UnsetEnv)
 		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 		if err := cmd.Start(); err != nil {
 			return err
@@ -475,24 +468,6 @@ func launchDetachedInDir(dirPath string, specs []launcherSpec) error {
 	}
 
 	return errors.New("no supported terminal command found")
-}
-
-func envWithout(unset []string) []string {
-	if len(unset) == 0 {
-		return os.Environ()
-	}
-	env := os.Environ()
-	result := make([]string, 0, len(env))
-outer:
-	for _, item := range env {
-		for _, key := range unset {
-			if strings.HasPrefix(item, key+"=") {
-				continue outer
-			}
-		}
-		result = append(result, item)
-	}
-	return result
 }
 
 func readTruncatedFile(path string, maxBytes int) (string, bool, error) {

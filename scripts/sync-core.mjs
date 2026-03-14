@@ -2,21 +2,17 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import * as git from 'isomorphic-git';
+import { CONFIG_PATH, getSyncConfig, loadConfigSync } from './config.mjs';
 import { resolveIdentifier, toRepoInfoFromGitDir, toRepoInfoFromPath } from './resolve-identifier.mjs';
 
-export const DEFAULT_SYNC_OPTIONS = {
-  db: './data/reposview.sqlite',
-  roots: [process.env.HOME || '/'],
-  excludeRegex: process.env.HOME
-    ? `^${String(process.env.HOME).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/\\.[^/]+(?:/|$)`
-    : '^$',
-  dryRun: false,
-  verbose: false,
-  scanner: 'auto'
-};
+export function getDefaultSyncOptions() {
+  return getSyncConfig(loadConfigSync());
+}
+
+export const DEFAULT_SYNC_OPTIONS = getDefaultSyncOptions();
 
 export function parseSyncArgs(argv) {
-  const opts = { ...DEFAULT_SYNC_OPTIONS };
+  const opts = getDefaultSyncOptions();
 
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
@@ -60,9 +56,10 @@ export function parseSyncArgs(argv) {
 
 export function printSyncHelp() {
   process.stdout.write('Usage: pnpm run sync:index -- [options]\n\n');
+  process.stdout.write(`Defaults are loaded from ${CONFIG_PATH}\n\n`);
   process.stdout.write('Options:\n');
-  process.stdout.write('  --db <path>             SQLite database path (default: ./data/reposview.sqlite)\n');
-  process.stdout.write('  --root <path>           Single scan root (default: /)\n');
+  process.stdout.write('  --db <path>             SQLite database path (default: config paths.database)\n');
+  process.stdout.write('  --root <path>           Single scan root (default: first configured root)\n');
   process.stdout.write('  --roots <a,b,c>         Comma-separated scan roots\n');
   process.stdout.write('  --exclude-regex <expr>  Path exclusion regex\n');
   process.stdout.write('  --scanner <mode>        auto|fdfind|fd|node (default: auto)\n');
@@ -312,7 +309,7 @@ function finalizeSync(db, pruneMissing, now) {
 }
 
 export async function runSync(rawOptions = {}) {
-  const opts = { ...DEFAULT_SYNC_OPTIONS, ...rawOptions };
+  const opts = { ...getDefaultSyncOptions(), ...rawOptions };
   const onProgress = typeof opts.onProgress === 'function' ? opts.onProgress : null;
   const exclude = new RegExp(opts.excludeRegex);
   const roots = opts.roots.map((r) => path.resolve(r));

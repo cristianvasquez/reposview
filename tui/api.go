@@ -151,7 +151,13 @@ func (c *apiClient) openBrowser(rawURL string) error {
 		return errors.New("browser target is empty")
 	}
 
-	candidates := []string{"xdg-open", "open"}
+	candidates := defaultAppConfig().Operations.OpenWeb.Commands
+	if c.local != nil {
+		candidates = c.local.config.Operations.OpenWeb.Commands
+	} else if repoRoot, err := discoverRepoRoot(); err == nil {
+		candidates = loadAppConfig(repoRoot).Operations.OpenWeb.Commands
+	}
+
 	for _, name := range candidates {
 		path, err := exec.LookPath(name)
 		if err != nil {

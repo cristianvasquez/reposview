@@ -7,18 +7,20 @@ import { spawn } from 'node:child_process';
 import readline from 'node:readline';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
-import { DEFAULT_SYNC_OPTIONS, commandExists, reindexRepositoryByPath, deleteRepositoryByPath } from './sync-core.mjs';
+import { CONFIG_PATH, getInspectConfig, loadConfigSync } from './config.mjs';
+import { commandExists, reindexRepositoryByPath, deleteRepositoryByPath } from './sync-core.mjs';
 import { identifierDisplayFromRow, identifierKeyFromRow } from './resolve-identifier.mjs';
 import { launcherConfig } from '../config/launchers.mjs';
 
 function parseArgs(argv) {
+  const defaults = getInspectConfig(loadConfigSync());
   const opts = {
-    db: DEFAULT_SYNC_OPTIONS.db,
-    roots: DEFAULT_SYNC_OPTIONS.roots,
-    excludeRegex: DEFAULT_SYNC_OPTIONS.excludeRegex,
-    scanner: DEFAULT_SYNC_OPTIONS.scanner,
-    host: '127.0.0.1',
-    port: 8787
+    db: defaults.db,
+    roots: defaults.roots,
+    excludeRegex: defaults.excludeRegex,
+    scanner: defaults.scanner,
+    host: defaults.host,
+    port: defaults.port
   };
 
   for (let i = 0; i < argv.length; i += 1) {
@@ -64,14 +66,15 @@ function parseArgs(argv) {
 
 function printHelp() {
   process.stdout.write('Usage: pnpm run inspect -- [options]\n\n');
+  process.stdout.write(`Defaults are loaded from ${CONFIG_PATH}\n\n`);
   process.stdout.write('Options:\n');
-  process.stdout.write('  --db <path>             SQLite database path (default: ./data/reposview.sqlite)\n');
-  process.stdout.write('  --root <path>           Single scan root for UI-triggered sync (default: /)\n');
+  process.stdout.write('  --db <path>             SQLite database path (default: config paths.database)\n');
+  process.stdout.write('  --root <path>           Single scan root for UI-triggered sync (default: first configured root)\n');
   process.stdout.write('  --roots <a,b,c>         Comma-separated scan roots for UI-triggered sync\n');
   process.stdout.write('  --exclude-regex <expr>  Path exclusion regex for UI-triggered sync\n');
   process.stdout.write('  --scanner <mode>        auto|fdfind|fd|node (default: auto)\n');
-  process.stdout.write('  --host <host>           Bind host (default: 127.0.0.1)\n');
-  process.stdout.write('  --port <port>           Bind port (default: 8787)\n');
+  process.stdout.write('  --host <host>           Bind host (default: config api.host)\n');
+  process.stdout.write('  --port <port>           Bind port (default: config api.port)\n');
 }
 
 function qParam(url, key, fallback = '') {

@@ -129,24 +129,50 @@ type keyMap struct {
 }
 
 func defaultKeys() keyMap {
+	return keyMapFromConfig(defaultAppConfig())
+}
+
+func keyMapFromConfig(cfg appConfig) keyMap {
 	return keyMap{
-		Left:      key.NewBinding(key.WithKeys("left"), key.WithHelp("←", "left pane")),
-		Right:     key.NewBinding(key.WithKeys("right"), key.WithHelp("→", "right pane")),
-		CycleTree: key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "cycle tree")),
-		Up:        key.NewBinding(key.WithKeys("up"), key.WithHelp("↑", "move")),
-		Down:      key.NewBinding(key.WithKeys("down"), key.WithHelp("↓", "move")),
-		Apply:     key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "apply/select")),
-		Filter:    key.NewBinding(key.WithKeys("f"), key.WithHelp("f", "filter pane")),
-		Help:      key.NewBinding(key.WithKeys("?", "h"), key.WithHelp("?", "help")),
-		List:      key.NewBinding(key.WithKeys("l"), key.WithHelp("l", "list osg repos")),
-		Refresh:   key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "refresh")),
-		Sync:      key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "sync")),
-		Terminal:  key.NewBinding(key.WithKeys("t"), key.WithHelp("t", "open terminal")),
-		Toggle:    key.NewBinding(key.WithKeys("o"), key.WithHelp("o", "toggle osg")),
-		PathTree:  key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "path tree")),
-		IdentTree: key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "identifier tree")),
-		Cancel:    key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "cancel/clear")),
-		Quit:      key.NewBinding(key.WithKeys("q", "ctrl+c"), key.WithHelp("q", "quit")),
+		Left:      key.NewBinding(key.WithKeys(cfg.TUI.Keys.Left...), key.WithHelp(displayKey(cfg.TUI.Keys.Left), "left pane")),
+		Right:     key.NewBinding(key.WithKeys(cfg.TUI.Keys.Right...), key.WithHelp(displayKey(cfg.TUI.Keys.Right), "right pane")),
+		CycleTree: key.NewBinding(key.WithKeys(cfg.TUI.Keys.CycleTree...), key.WithHelp(firstKey(cfg.TUI.Keys.CycleTree), "cycle tree")),
+		Up:        key.NewBinding(key.WithKeys(cfg.TUI.Keys.Up...), key.WithHelp(displayKey(cfg.TUI.Keys.Up), "move")),
+		Down:      key.NewBinding(key.WithKeys(cfg.TUI.Keys.Down...), key.WithHelp(displayKey(cfg.TUI.Keys.Down), "move")),
+		Apply:     key.NewBinding(key.WithKeys(cfg.TUI.Keys.Apply...), key.WithHelp(firstKey(cfg.TUI.Keys.Apply), "apply/select")),
+		Filter:    key.NewBinding(key.WithKeys(cfg.TUI.Keys.Filter...), key.WithHelp(firstKey(cfg.TUI.Keys.Filter), "filter pane")),
+		Help:      key.NewBinding(key.WithKeys(cfg.TUI.Keys.Help...), key.WithHelp(firstKey(cfg.TUI.Keys.Help), "help")),
+		List:      key.NewBinding(key.WithKeys(cfg.TUI.Keys.List...), key.WithHelp(firstKey(cfg.TUI.Keys.List), "list osg repos")),
+		Refresh:   key.NewBinding(key.WithKeys(cfg.TUI.Keys.Refresh...), key.WithHelp(firstKey(cfg.TUI.Keys.Refresh), "refresh")),
+		Sync:      key.NewBinding(key.WithKeys(cfg.TUI.Keys.Sync...), key.WithHelp(firstKey(cfg.TUI.Keys.Sync), "sync")),
+		Terminal:  key.NewBinding(key.WithKeys(cfg.TUI.Keys.OpenTerminal...), key.WithHelp(firstKey(cfg.TUI.Keys.OpenTerminal), "open terminal")),
+		Toggle:    key.NewBinding(key.WithKeys(cfg.TUI.Keys.ToggleOSG...), key.WithHelp(firstKey(cfg.TUI.Keys.ToggleOSG), "toggle osg")),
+		PathTree:  key.NewBinding(key.WithKeys(cfg.TUI.Keys.PathTree...), key.WithHelp(firstKey(cfg.TUI.Keys.PathTree), "path tree")),
+		IdentTree: key.NewBinding(key.WithKeys(cfg.TUI.Keys.IdentifierTree...), key.WithHelp(firstKey(cfg.TUI.Keys.IdentifierTree), "identifier tree")),
+		Cancel:    key.NewBinding(key.WithKeys(cfg.TUI.Keys.Cancel...), key.WithHelp(firstKey(cfg.TUI.Keys.Cancel), "cancel/clear")),
+		Quit:      key.NewBinding(key.WithKeys(cfg.TUI.Keys.Quit...), key.WithHelp(firstKey(cfg.TUI.Keys.Quit), "quit")),
+	}
+}
+
+func firstKey(keys []string) string {
+	if len(keys) == 0 {
+		return ""
+	}
+	return keys[0]
+}
+
+func displayKey(keys []string) string {
+	switch firstKey(keys) {
+	case "left":
+		return "←"
+	case "right":
+		return "→"
+	case "up":
+		return "↑"
+	case "down":
+		return "↓"
+	default:
+		return firstKey(keys)
 	}
 }
 
@@ -260,6 +286,10 @@ type model struct {
 }
 
 func newModel(client *apiClient, initialPathFilter string) model {
+	return newModelWithConfig(client, initialPathFilter, defaultAppConfig())
+}
+
+func newModelWithConfig(client *apiClient, initialPathFilter string, cfg appConfig) model {
 	filterInput := textinput.New()
 	filterInput.Placeholder = "filter current pane"
 	filterInput.CharLimit = 200
@@ -274,7 +304,7 @@ func newModel(client *apiClient, initialPathFilter string) model {
 
 	return model{
 		client:      client,
-		keys:        defaultKeys(),
+		keys:        keyMapFromConfig(cfg),
 		help:        h,
 		filterInput: filterInput,
 		preview:     preview,

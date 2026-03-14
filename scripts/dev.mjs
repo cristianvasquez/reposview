@@ -1,20 +1,10 @@
 #!/usr/bin/env node
 
 import { spawn } from 'node:child_process';
+import { CONFIG_PATH, getDevConfig, loadConfigSync } from './config.mjs';
 
 function parseArgs(argv) {
-  const home = process.env.HOME || '/';
-  const escapedHome = home.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const opts = {
-    db: './data/reposview.sqlite',
-    roots: [home],
-    excludeRegex: `^${escapedHome}/\\.[^/]+(?:/|$)`,
-    scanner: 'auto',
-    apiHost: '127.0.0.1',
-    apiPort: 8787,
-    webHost: '127.0.0.1',
-    webPort: 8790
-  };
+  const opts = getDevConfig(loadConfigSync());
 
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
@@ -41,16 +31,17 @@ function parseArgs(argv) {
 
 function printHelp() {
   process.stdout.write('Usage: pnpm run dev -- [options]\n\n');
+  process.stdout.write(`Defaults are loaded from ${CONFIG_PATH}\n\n`);
   process.stdout.write('Options:\n');
-  process.stdout.write('  --db <path>             SQLite database path\n');
+  process.stdout.write('  --db <path>             SQLite database path (default: config paths.database)\n');
   process.stdout.write('  --root <path>           Single scan root for sync\n');
   process.stdout.write('  --roots <a,b,c>         Comma-separated scan roots\n');
   process.stdout.write('  --exclude-regex <expr>  Path exclusion regex\n');
   process.stdout.write('  --scanner <mode>        auto|fdfind|fd|node\n');
-  process.stdout.write('  --host <host>           Vite bind host (default: 127.0.0.1)\n');
-  process.stdout.write('  --port <port>           Vite bind port (default: 8790)\n');
-  process.stdout.write('  --api-host <host>       API bind host (default: 127.0.0.1)\n');
-  process.stdout.write('  --api-port <port>       API bind port (default: 8787)\n');
+  process.stdout.write('  --host <host>           Vite bind host (default: config web.host)\n');
+  process.stdout.write('  --port <port>           Vite bind port (default: config web.port)\n');
+  process.stdout.write('  --api-host <host>       API bind host (default: config api.host)\n');
+  process.stdout.write('  --api-port <port>       API bind port (default: config api.port)\n');
 }
 
 function startProc(cmd, args, extraEnv = {}) {

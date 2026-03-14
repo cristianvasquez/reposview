@@ -56,6 +56,28 @@ func TestDefaultKeysUseTForTerminalAndOForToggle(t *testing.T) {
 	}
 }
 
+func TestKeyMapFromConfigOverridesBindings(t *testing.T) {
+	cfg := defaultAppConfig()
+	cfg.TUI.Keys.OpenTerminal = []string{"x"}
+	cfg.TUI.Keys.Help = []string{"F1", "?"}
+	cfg.TUI.Keys.Quit = []string{"z", "ctrl+d"}
+
+	keys := keyMapFromConfig(cfg)
+
+	if got := keys.Terminal.Keys(); len(got) != 1 || got[0] != "x" {
+		t.Fatalf("terminal keys = %#v, want [\"x\"]", got)
+	}
+	if got := keys.Help.Keys(); len(got) != 2 || got[0] != "F1" || got[1] != "?" {
+		t.Fatalf("help keys = %#v, want [\"F1\", \"?\"]", got)
+	}
+	if got := keys.Help.Help().Key; got != "F1" {
+		t.Fatalf("help display key = %q, want F1", got)
+	}
+	if got := keys.Quit.Keys(); len(got) != 2 || got[0] != "z" || got[1] != "ctrl+d" {
+		t.Fatalf("quit keys = %#v, want [\"z\", \"ctrl+d\"]", got)
+	}
+}
+
 func TestConnectionSummary(t *testing.T) {
 	m := newModel(&apiClient{base: "http://example.test"}, "")
 	m.connections["/repos/a"] = connectionStatus{
