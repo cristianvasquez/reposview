@@ -51,8 +51,9 @@ type osgConnectionPayload struct {
 }
 
 type apiClient struct {
-	base string
-	http *http.Client
+	base  string
+	http  *http.Client
+	local *localBackend
 }
 
 func newAPIClient(base string) *apiClient {
@@ -63,6 +64,9 @@ func newAPIClient(base string) *apiClient {
 }
 
 func (c *apiClient) health() error {
+	if c.local != nil {
+		return nil
+	}
 	resp, err := c.http.Get(c.base + "/healthz")
 	if err != nil {
 		return err
@@ -76,18 +80,27 @@ func (c *apiClient) health() error {
 }
 
 func (c *apiClient) getRows(q url.Values) (rowsResponse, error) {
+	if c.local != nil {
+		return c.local.getRows(q)
+	}
 	var out rowsResponse
 	err := c.getJSON("/rows?"+q.Encode(), &out)
 	return out, err
 }
 
 func (c *apiClient) getStatus() (syncStatus, error) {
+	if c.local != nil {
+		return c.local.getStatus()
+	}
 	var out syncStatus
 	err := c.getJSON("/sync-status", &out)
 	return out, err
 }
 
 func (c *apiClient) getRepoDetails(path string) (repoDetailsResponse, error) {
+	if c.local != nil {
+		return c.local.getRepoDetails(path)
+	}
 	var out repoDetailsResponse
 	query := url.Values{}
 	query.Set("path", path)
@@ -96,10 +109,16 @@ func (c *apiClient) getRepoDetails(path string) (repoDetailsResponse, error) {
 }
 
 func (c *apiClient) triggerSync() error {
+	if c.local != nil {
+		return c.local.triggerSync()
+	}
 	return c.postJSON("/sync", nil, nil)
 }
 
 func (c *apiClient) openTerminal(path string) error {
+	if c.local != nil {
+		return c.local.openTerminal(path)
+	}
 	body := map[string]string{"path": path}
 	var out actionResponse
 	if err := c.postJSON("/actions/open-terminal", body, &out); err != nil {
@@ -112,6 +131,9 @@ func (c *apiClient) openTerminal(path string) error {
 }
 
 func (c *apiClient) openYazi(path string) error {
+	if c.local != nil {
+		return c.local.openYazi(path)
+	}
 	body := map[string]string{"path": path}
 	var out actionResponse
 	if err := c.postJSON("/actions/open-yazi", body, &out); err != nil {

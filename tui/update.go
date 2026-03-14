@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
@@ -60,6 +61,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.errLine = ""
 		m.statusLine = msg.label
 		return m, nil
+
+	case syncFinishedMsg:
+		if msg.err != nil {
+			m.errLine = msg.err.Error()
+			return m, m.fetchStatusCmd()
+		}
+		m.errLine = ""
+		m.statusLine = msg.label
+		return m, tea.Batch(m.fetchRowsCmd(), m.fetchStatusCmd(), m.fetchDetailsForSelection(), m.fetchConnectionForSelection())
 
 	case connectionMsg:
 		if msg.state.Path != "" {
@@ -126,6 +136,22 @@ func (m model) handleRowsMsg(msg rowsMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if key.Matches(msg, m.keys.Help) {
+		m.showHelp = !m.showHelp
+		if m.showHelp {
+			m.statusLine = "Help"
+		} else {
+			m.statusLine = ""
+		}
+		return m, nil
+	}
+	if m.showHelp {
+		if key.Matches(msg, m.keys.Cancel) || key.Matches(msg, m.keys.Quit) || key.Matches(msg, m.keys.Help) {
+			m.showHelp = false
+			m.statusLine = ""
+		}
+		return m, nil
+	}
 	if key.Matches(msg, m.keys.Quit) {
 		return m, tea.Quit
 	}
@@ -190,6 +216,21 @@ func (m model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(m.fetchRowsCmd(), m.fetchStatusCmd(), m.fetchDetailsForSelection(), m.fetchConnectionForSelection())
 	}
 	if key.Matches(msg, m.keys.Sync) {
+		if m.client.local != nil {
+			cmd, _, err := m.client.local.syncCommand()
+			if err != nil {
+				return m, func() tea.Msg { return syncFinishedMsg{err: err} }
+			}
+			startedAt := time.Now()
+			m.statusLine = "Running sync..."
+			return m, tea.ExecProcess(cmd, func(runErr error) tea.Msg {
+				m.client.local.recordSyncResult(runErr, startedAt)
+				if runErr != nil {
+					return syncFinishedMsg{err: runErr}
+				}
+				return syncFinishedMsg{label: "Sync completed"}
+			})
+		}
 		return m, func() tea.Msg {
 			err := m.client.triggerSync()
 			return actionMsg{label: "Sync requested", err: err}

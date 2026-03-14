@@ -25,6 +25,10 @@ func (m model) View() string {
 		return "Terminal too small for reposview TUI. Need at least 72x16."
 	}
 
+	if m.showHelp {
+		return m.renderHelpOverlay()
+	}
+
 	bodyHeight := max(6, m.height-8)
 	leftWidth, middleWidth, rightWidth := layoutColumns(m.width)
 
@@ -129,12 +133,12 @@ func (m model) renderTree(width, height int) string {
 }
 
 func (m model) renderRepos(width, height int) string {
-	lines := []string{"Repositories"}
+	lines := []string{}
 	if len(m.rows) == 0 {
-		lines = append(lines, "", "No repositories match the current filters.")
+		lines = append(lines, "No repositories match the current filters.")
 		return panelStyle(m.focus == focusRepos).Width(width).Height(height).Render(strings.Join(lines, "\n"))
 	}
-	start, end := windowBounds(m.repoIndex, len(m.rows), height-2)
+	start, end := windowBounds(m.repoIndex, len(m.rows), height)
 	for i := start; i < end; i++ {
 		r := m.rows[i]
 		summary := compactPathLabel(r.Path, 2)
@@ -216,6 +220,48 @@ func truncateText(s string, width int) string {
 		return ""
 	}
 	return truncate.StringWithTail(strings.ReplaceAll(s, "\n", " "), uint(width), "…")
+}
+
+func (m model) renderHelpOverlay() string {
+	lines := []string{
+		titleStyle.Render("reposview help"),
+		"",
+		"Navigation",
+		"  left/right: move focus across tree, repos, preview",
+		"  up/down: move inside the focused pane",
+		"  tab: switch between path tree and identifier tree",
+		"  p / i: jump directly to path tree or identifier tree",
+		"",
+		"Actions",
+		"  enter on tree: apply the selected tree prefix",
+		"  space on tree: collapse or expand a tree branch",
+		"  enter on repos in path mode: open yazi",
+		"  enter on repos in identifier mode: open browser URL",
+		"  t: open terminal in selected repository",
+		"  o: toggle OSG connection for selected repository",
+		"  l: list configured OSG repositories with fzf",
+		"  s: run sync against the database",
+		"  r: refresh rows, details, and status",
+		"",
+		"Filtering",
+		"  f: filter the current pane",
+		"  esc: clear current pane filter or leave inline filter mode",
+		"  tree filters narrow the repository list",
+		"  repo filters narrow only the visible list",
+		"",
+		"Help",
+		"  ? / h: toggle this help",
+		"  esc / q: close help",
+	}
+
+	contentWidth := max(40, m.width-8)
+	boxWidth := min(contentWidth, 88)
+	content := panelStyle(true).
+		Width(boxWidth).
+		Height(max(12, m.height-4)).
+		Render(strings.Join(lines, "\n"))
+
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, content)
 }
 
 func relativeTime(iso string) string {

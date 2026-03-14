@@ -4,8 +4,10 @@ import { createServer } from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
+import readline from 'node:readline';
 import { DatabaseSync } from 'node:sqlite';
-import { DEFAULT_SYNC_OPTIONS, commandExists, runSync, reindexRepositoryByPath, deleteRepositoryByPath } from './sync-core.mjs';
+import { fileURLToPath } from 'node:url';
+import { DEFAULT_SYNC_OPTIONS, commandExists, reindexRepositoryByPath, deleteRepositoryByPath } from './sync-core.mjs';
 import { identifierDisplayFromRow, identifierKeyFromRow } from './resolve-identifier.mjs';
 import { launcherConfig } from '../config/launchers.mjs';
 
@@ -126,6 +128,29 @@ function launchTerminalAtDir(dirPath) {
 
 function launchYaziAtDir(dirPath) {
   return launchFromConfig(launcherConfig.yazi, dirPath);
+}
+
+function syncCommandArgs(opts, dbPath) {
+  const args = ['run', 'sync', '--', '--db', dbPath, '--scanner', opts.scanner];
+  for (const root of opts.roots) {
+    args.push('--root', root);
+  }
+  if (opts.excludeRegex) {
+    args.push('--exclude-regex', opts.excludeRegex);
+  }
+  return args;
+}
+
+function spawnSyncProcess(opts, dbPath) {
+  const command = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm';
+  const args = syncCommandArgs(opts, dbPath);
+  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+  const child = spawn(command, args, {
+    cwd: repoRoot,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    env: process.env
+  });
+  return { child, command, args };
 }
 
 async function readJsonBody(req, maxBytes = 64 * 1024) {
@@ -497,17 +522,43 @@ async function main() {
       phase: 'queued',
       message: 'sync queued',
       error: null,
+      durationMs: null,
       processedGitDirs: 0,
       discoveredGitDirs: 0,
       persistedRepos: 0
     });
 
-    runSync({
-      db: dbPath,
-      roots: opts.roots,
-      excludeRegex: opts.excludeRegex,
-      scanner: opts.scanner,
-      onProgress: (event) => {
+    let child;
+    try {
+      ({ child } = spawnSyncProcess(opts, dbPath));
+    } catch (error) {
+      updateSync({
+        running: false,
+        phase: 'error',
+        message: 'sync failed to start',
+        error: error instanceof Error ? error.message : String(error)
+      });
+      throw error;
+    }
+
+    let stderrText = '';
+    child.stderr.on('data', (chunk) => {
+      stderrText += chunk.toString('utf8');
+    });
+
+    const rl = readline.createInterface({ input: child.stdout });
+    rl.on('line', (line) => {
+      const value = String(line || '').trim();
+      if (!value) return;
+
+      let event;
+      try {
+        event = JSON.parse(value);
+      } catch {
+        return;
+      }
+
+      if (event.type === 'progress') {
         updateSync({
           phase: event.phase || syncState.phase,
           message: event.message || syncState.message,
@@ -516,31 +567,57 @@ async function main() {
           processedGitDirs: event.processedGitDirs ?? syncState.processedGitDirs,
           persistedRepos: event.persistedRepos ?? syncState.persistedRepos
         });
+        return;
       }
-    })
-      .then((result) => {
+
+      if (event.type === 'result') {
         updateSync({
           running: false,
           phase: 'done',
           message: 'sync completed',
-          scanner: result.scanner,
-          discoveredGitDirs: result.scannedGitDirs,
-          processedGitDirs: result.scannedGitDirs,
-          persistedRepos: result.indexedRepos,
-          lastRunAt: result.at,
-          lastIndexed: result.indexedRepos,
-          durationMs: result.durationMs,
+          scanner: event.scanner,
+          discoveredGitDirs: event.scannedGitDirs,
+          processedGitDirs: event.scannedGitDirs,
+          persistedRepos: event.indexedRepos,
+          lastRunAt: event.at,
+          lastIndexed: event.indexedRepos,
+          durationMs: event.durationMs,
           error: null
         });
-      })
-      .catch((error) => {
+        return;
+      }
+
+      if (event.type === 'error') {
         updateSync({
           running: false,
           phase: 'error',
           message: 'sync failed',
-          error: error instanceof Error ? error.message : String(error)
+          error: event.error || 'sync failed'
         });
+      }
+    });
+
+    child.on('error', (error) => {
+      updateSync({
+        running: false,
+        phase: 'error',
+        message: 'sync failed to start',
+        error: error instanceof Error ? error.message : String(error)
       });
+    });
+
+    child.on('close', (code) => {
+      rl.close();
+      if (code === 0 || syncState.phase === 'done') {
+        return;
+      }
+      updateSync({
+        running: false,
+        phase: 'error',
+        message: 'sync failed',
+        error: stderrText.trim() || `sync command exited with code ${code}`
+      });
+    });
 
     return true;
   }

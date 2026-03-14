@@ -51,6 +51,9 @@ func TestDefaultKeysUseTForTerminalAndOForToggle(t *testing.T) {
 	if got := keys.List.Help().Key; got != "l" {
 		t.Fatalf("list key = %q, want l", got)
 	}
+	if got := keys.Help.Help().Key; got != "?" {
+		t.Fatalf("help key = %q, want ?", got)
+	}
 }
 
 func TestConnectionSummary(t *testing.T) {

@@ -116,6 +116,7 @@ type keyMap struct {
 	Down      key.Binding
 	Apply     key.Binding
 	Filter    key.Binding
+	Help      key.Binding
 	List      key.Binding
 	Refresh   key.Binding
 	Sync      key.Binding
@@ -136,6 +137,7 @@ func defaultKeys() keyMap {
 		Down:      key.NewBinding(key.WithKeys("down"), key.WithHelp("↓", "move")),
 		Apply:     key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "apply/select")),
 		Filter:    key.NewBinding(key.WithKeys("f"), key.WithHelp("f", "filter pane")),
+		Help:      key.NewBinding(key.WithKeys("?", "h"), key.WithHelp("?", "help")),
 		List:      key.NewBinding(key.WithKeys("l"), key.WithHelp("l", "list osg repos")),
 		Refresh:   key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "refresh")),
 		Sync:      key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "sync")),
@@ -149,7 +151,7 @@ func defaultKeys() keyMap {
 }
 
 func (k keyMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Left, k.Right, k.CycleTree, k.Up, k.Filter, k.List, k.Toggle, k.Quit}
+	return []key.Binding{k.Terminal, k.Toggle, k.List, k.Refresh, k.Sync, k.Filter, k.Help}
 }
 
 func (k keyMap) FullHelp() [][]key.Binding {
@@ -176,6 +178,11 @@ type statusMsg struct {
 }
 
 type actionMsg struct {
+	label string
+	err   error
+}
+
+type syncFinishedMsg struct {
 	label string
 	err   error
 }
@@ -225,6 +232,7 @@ type model struct {
 	focus     focusPane
 	treeKind  treeMode
 	filtering bool
+	showHelp  bool
 
 	rows          []row
 	allRows       []row

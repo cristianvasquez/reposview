@@ -5,15 +5,16 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
 
 func main() {
-	apiOrigin := flag.String("api-origin", "http://127.0.0.1:8787", "Inspect API origin")
-	spawnAPI := flag.Bool("spawn-api", true, "Start the inspect API automatically when needed")
-	dbPath := flag.String("db", "", "SQLite database path for spawned API (default: ../data/reposview.sqlite)")
-	scanner := flag.String("scanner", "auto", "Scanner mode for spawned API")
+	apiOrigin := flag.String("api-origin", "", "Optional inspect API origin; when empty the TUI reads the database directly")
+	spawnAPI := flag.Bool("spawn-api", false, "Start the inspect API automatically when using --api-origin")
+	dbPath := flag.String("db", "", "SQLite database path for local mode (default: ../data/reposview.sqlite)")
+	scanner := flag.String("scanner", "auto", "Scanner mode for local sync or spawned API")
 	flag.Parse()
 	initialPathFilter, err := resolveSelectionTarget(flag.Args())
 	if err != nil {
@@ -21,14 +22,23 @@ func main() {
 		os.Exit(1)
 	}
 
-	client := newAPIClient(*apiOrigin)
-	server, err := ensureAPI(client, *spawnAPI, *dbPath, *scanner)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-	if server != nil {
-		defer server.Stop()
+	var client *apiClient
+	if strings.TrimSpace(*apiOrigin) != "" {
+		client = newAPIClient(*apiOrigin)
+		server, err := ensureAPI(client, *spawnAPI, *dbPath, *scanner)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		if server != nil {
+			defer server.Stop()
+		}
+	} else {
+		client, err = newLocalAPIClient(*dbPath, *scanner)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
 	}
 
 	p := tea.NewProgram(newModel(client, initialPathFilter), tea.WithAltScreen())

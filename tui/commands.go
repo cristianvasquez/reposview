@@ -45,6 +45,19 @@ func (m model) fetchStatusCmd() tea.Cmd {
 	}
 }
 
+func (m model) fetchConnectionCmd(path string) tea.Cmd {
+	if path == "" {
+		return nil
+	}
+	return func() tea.Msg {
+		state, err := m.client.inspectConnection(path)
+		if err != nil {
+			return connectionMsg{state: connectionStatus{Path: path, Error: err.Error()}}
+		}
+		return connectionMsg{state: state}
+	}
+}
+
 func tickCmd() tea.Cmd {
 	return tea.Tick(2*time.Second, func(time.Time) tea.Msg { return tickMsg{} })
 }
@@ -66,9 +79,17 @@ func (m model) fetchPromptForSelection() tea.Cmd {
 	return renderPromptCmd(sel, width)
 }
 
+func (m model) fetchConnectionForSelection() tea.Cmd {
+	sel := m.selectedRow()
+	if sel.Path == "" {
+		return nil
+	}
+	return m.fetchConnectionCmd(sel.Path)
+}
+
 func (m model) afterFilterChangeCmd() tea.Cmd {
 	if m.focus == focusTree {
-		return tea.Batch(m.fetchRowsCmd(), m.fetchDetailsForSelection(), m.fetchPromptForSelection())
+		return tea.Batch(m.fetchRowsCmd(), m.fetchDetailsForSelection(), m.fetchPromptForSelection(), m.fetchConnectionForSelection())
 	}
-	return tea.Batch(m.fetchDetailsForSelection(), m.fetchPromptForSelection())
+	return tea.Batch(m.fetchDetailsForSelection(), m.fetchPromptForSelection(), m.fetchConnectionForSelection())
 }
