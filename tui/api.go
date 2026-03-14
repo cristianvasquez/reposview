@@ -13,6 +13,43 @@ import (
 	"time"
 )
 
+type osgEnvelope[T any] struct {
+	Success bool   `json:"success"`
+	Data    []T    `json:"data"`
+	Error   string `json:"error"`
+	Message string `json:"message"`
+}
+
+type osgInspectPayload struct {
+	Cwd        string              `json:"cwd"`
+	Repository *osgRepositoryState `json:"repository"`
+	Error      string              `json:"error"`
+}
+
+type osgRepositoryPayload struct {
+	Repository osgRepositoryState `json:"repository"`
+}
+
+type osgConfigPayload struct {
+	Repositories []osgConfiguredRepository `json:"repositories"`
+}
+
+type osgConfiguredRepository struct {
+	Identity string `json:"identity"`
+	Path     string `json:"path"`
+	URI      string `json:"uri"`
+}
+
+type osgRepositoryState struct {
+	Identity   string               `json:"identity"`
+	Path       string               `json:"path"`
+	Connection osgConnectionPayload `json:"connection"`
+}
+
+type osgConnectionPayload struct {
+	Connected bool `json:"connected"`
+}
+
 type apiClient struct {
 	base string
 	http *http.Client
@@ -106,6 +143,131 @@ func (c *apiClient) openBrowser(rawURL string) error {
 	}
 
 	return errors.New("no supported browser opener found")
+}
+
+func (c *apiClient) inspectConnection(path string) (connectionStatus, error) {
+	var payload osgEnvelope[osgInspectPayload]
+	if err := runOSGJSON(path, &payload, "inspect", "--format", "json"); err != nil {
+		return connectionStatus{}, err
+	}
+	if len(payload.Data) == 0 {
+		return connectionStatus{}, errors.New("osg inspect returned no data")
+	}
+
+	data := payload.Data[0]
+	status := connectionStatus{Path: path, Error: data.Error}
+	if data.Repository != nil {
+		status.Path = nonEmptyOrFallback(data.Repository.Path, path)
+		status.Identity = data.Repository.Identity
+		status.Connected = data.Repository.Connection.Connected
+		status.Known = true
+	}
+	return status, nil
+}
+
+func (c *apiClient) connectRepository(path string) (connectionStatus, string, error) {
+	var payload osgEnvelope[osgRepositoryPayload]
+	if err := runOSGJSON(path, &payload, "connect", path, "--format", "json"); err != nil {
+		return connectionStatus{}, "", err
+	}
+	return connectionStatusFromRepositoryPayload(path, payload)
+}
+
+func (c *apiClient) disconnectRepository(path string) (connectionStatus, string, error) {
+	var payload osgEnvelope[osgRepositoryPayload]
+	if err := runOSGJSON(path, &payload, "disconnect", path, "--format", "json"); err != nil {
+		return connectionStatus{}, "", err
+	}
+	return connectionStatusFromRepositoryPayload(path, payload)
+}
+
+func (c *apiClient) listConfiguredRepositories() ([]osgConfiguredRepository, error) {
+	var payload osgEnvelope[osgConfigPayload]
+	if err := runOSGJSON(".", &payload, "config", "list", "--format", "json"); err != nil {
+		return nil, err
+	}
+	repos := make([]osgConfiguredRepository, 0)
+	for _, item := range payload.Data {
+		repos = append(repos, item.Repositories...)
+	}
+	return repos, nil
+}
+
+func connectionStatusFromRepositoryPayload(path string, payload osgEnvelope[osgRepositoryPayload]) (connectionStatus, string, error) {
+	if len(payload.Data) == 0 {
+		return connectionStatus{}, "", errors.New("osg command returned no data")
+	}
+
+	repository := payload.Data[0].Repository
+	return connectionStatus{
+		Path:      nonEmptyOrFallback(repository.Path, path),
+		Identity:  repository.Identity,
+		Connected: repository.Connection.Connected,
+		Known:     true,
+	}, payload.Message, nil
+}
+
+func runOSGJSON(dir string, out any, args ...string) error {
+	osgPath, err := exec.LookPath("osg")
+	if err != nil {
+		return errors.New("osg executable not found")
+	}
+
+	cmd := exec.Command(osgPath, args...)
+	cmd.Dir = dir
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	runErr := cmd.Run()
+	if err := decodeOSGJSON(stdout.Bytes(), out); err == nil {
+		if runErr != nil {
+			if msg := extractOSGError(out); msg != "" {
+				return errors.New(msg)
+			}
+		}
+		return nil
+	}
+
+	if runErr != nil {
+		msg := strings.TrimSpace(stderr.String())
+		if msg == "" {
+			msg = strings.TrimSpace(stdout.String())
+		}
+		if msg == "" {
+			msg = runErr.Error()
+		}
+		return errors.New(msg)
+	}
+
+	return decodeOSGJSON(stdout.Bytes(), out)
+}
+
+func decodeOSGJSON(data []byte, out any) error {
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) == 0 {
+		return errors.New("empty osg response")
+	}
+	return json.Unmarshal(trimmed, out)
+}
+
+func extractOSGError(payload any) string {
+	switch value := payload.(type) {
+	case *osgEnvelope[osgInspectPayload]:
+		return value.Error
+	case *osgEnvelope[osgRepositoryPayload]:
+		return value.Error
+	default:
+		return ""
+	}
+}
+
+func nonEmptyOrFallback(value, fallback string) string {
+	if strings.TrimSpace(value) == "" {
+		return fallback
+	}
+	return value
 }
 
 func (c *apiClient) getJSON(path string, out any) error {

@@ -48,7 +48,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.lastStatus = msg.data
 		if msg.data.LastRunAt != "" && msg.data.LastRunAt != m.lastRunAt {
 			m.lastRunAt = msg.data.LastRunAt
-			return m, tea.Batch(m.fetchRowsCmd(), m.fetchDetailsForSelection())
+			return m, tea.Batch(m.fetchRowsCmd(), m.fetchDetailsForSelection(), m.fetchConnectionForSelection())
 		}
 		return m, nil
 
@@ -59,6 +59,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.errLine = ""
 		m.statusLine = msg.label
+		return m, nil
+
+	case connectionMsg:
+		if msg.state.Path != "" {
+			m.connections[msg.state.Path] = msg.state
+		}
+		if msg.label != "" {
+			m.errLine = ""
+			m.statusLine = msg.label
+			return m, tea.Batch(m.fetchRowsCmd(), m.fetchDetailsForSelection(), m.fetchPromptForSelection(), m.fetchConnectionForSelection())
+		}
+		m.syncPreviewContent()
 		return m, nil
 
 	case fzfResultMsg:
@@ -108,7 +120,7 @@ func (m model) handleRowsMsg(msg rowsMsg) (tea.Model, tea.Cmd) {
 	m.statusLine = ""
 	m.syncPreviewContent()
 	if sel := m.selectedRow(); sel.Path != "" {
-		return m, tea.Batch(m.fetchDetailsCmd(sel.Path), m.fetchPromptForSelection())
+		return m, tea.Batch(m.fetchDetailsCmd(sel.Path), m.fetchPromptForSelection(), m.fetchConnectionCmd(sel.Path))
 	}
 	return m, nil
 }
@@ -165,9 +177,17 @@ func (m model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.applyFocus()
 		return m, nil
 	}
+	if key.Matches(msg, m.keys.List) {
+		if !fzfAvailable() {
+			m.statusLine = "fzf not found"
+			return m, nil
+		}
+		m.statusLine = "Loading OSG repo list..."
+		return m, m.openOSGRepoListCmd()
+	}
 	if key.Matches(msg, m.keys.Refresh) {
 		m.statusLine = "Refreshing..."
-		return m, tea.Batch(m.fetchRowsCmd(), m.fetchStatusCmd(), m.fetchDetailsForSelection())
+		return m, tea.Batch(m.fetchRowsCmd(), m.fetchStatusCmd(), m.fetchDetailsForSelection(), m.fetchConnectionForSelection())
 	}
 	if key.Matches(msg, m.keys.Sync) {
 		return m, func() tea.Msg {
@@ -175,7 +195,7 @@ func (m model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return actionMsg{label: "Sync requested", err: err}
 		}
 	}
-	if key.Matches(msg, m.keys.Open) {
+	if key.Matches(msg, m.keys.Terminal) {
 		sel := m.selectedRow()
 		if sel.Path == "" {
 			return m, nil
@@ -185,16 +205,56 @@ func (m model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return actionMsg{label: "Opened terminal for " + sel.Path, err: err}
 		}
 	}
+	if key.Matches(msg, m.keys.Toggle) {
+		sel := m.selectedRow()
+		if sel.Path == "" {
+			return m, nil
+		}
+		m.statusLine = "Toggling OSG connection..."
+		return m, func() tea.Msg {
+			state, err := m.client.inspectConnection(sel.Path)
+			if err != nil {
+				return actionMsg{err: err}
+			}
+
+			var (
+				nextState connectionStatus
+				label     string
+			)
+			if state.Connected {
+				nextState, label, err = m.client.disconnectRepository(sel.Path)
+				if err == nil && label == "" {
+					label = "Disconnected " + sel.Path
+				}
+			} else {
+				nextState, label, err = m.client.connectRepository(sel.Path)
+				if err == nil && label == "" {
+					label = "Connected " + sel.Path
+				}
+			}
+			if err != nil {
+				return actionMsg{err: err}
+			}
+
+			return connectionMsg{state: connectionStatus{
+				Path:      nextState.Path,
+				Identity:  nextState.Identity,
+				Connected: nextState.Connected,
+				Known:     true,
+				Error:     "",
+			}, label: label}
+		}
+	}
 	if key.Matches(msg, m.keys.Cancel) {
 		if m.focus != focusPreview && m.currentPaneFilterValue() != "" {
 			m.setCurrentPaneFilterValue("")
 			m.applyCurrentPaneFilter()
 			if m.focus == focusTree {
 				m.statusLine = ""
-				return m, tea.Batch(m.fetchRowsCmd(), m.fetchDetailsForSelection(), m.fetchPromptForSelection())
+				return m, tea.Batch(m.fetchRowsCmd(), m.fetchDetailsForSelection(), m.fetchPromptForSelection(), m.fetchConnectionForSelection())
 			}
 			m.statusLine = ""
-			return m, tea.Batch(m.fetchDetailsForSelection(), m.fetchPromptForSelection())
+			return m, tea.Batch(m.fetchDetailsForSelection(), m.fetchPromptForSelection(), m.fetchConnectionForSelection())
 		}
 		return m, nil
 	}
@@ -254,11 +314,27 @@ func (m model) handleFzfResult(msg fzfResultMsg) (tea.Model, tea.Cmd) {
 		m.applyFocus()
 		m.syncPreviewContent()
 		m.statusLine = fmt.Sprintf("%s jump: %s", msg.treeKind, msg.selection)
-		return m, tea.Batch(m.fetchRowsCmd(), m.fetchDetailsForSelection())
+		return m, tea.Batch(m.fetchRowsCmd(), m.fetchDetailsForSelection(), m.fetchConnectionForSelection())
 	case focusRepos:
 		if msg.selection == "" {
 			m.statusLine = "No repository selected"
 			return m, nil
+		}
+		if msg.setFilter {
+			m.selectedPath = msg.selection
+			m.focus = focusRepos
+			m.treeKind = treePath
+			m.activeTreeFilter[treePath] = msg.selection
+			if data, ok := m.treeData[treePath]; ok {
+				data.expandToPrefix(msg.selection)
+				m.treeData[treePath] = data
+				m.treeIndex[treePath] = alignTreeCursor(m.visibleTreeItems(treePath), msg.selection, m.treeIndex[treePath])
+			}
+			m.rows = append([]row(nil), m.allRows...)
+			m.repoIndex = 0
+			m.applyFocus()
+			m.syncPreviewContent()
+			return m, tea.Batch(m.fetchRowsCmd(), m.fetchDetailsForSelection(), m.fetchPromptForSelection(), m.fetchConnectionForSelection())
 		}
 		for i, repo := range m.rows {
 			if repo.Path == msg.selection {
@@ -267,7 +343,7 @@ func (m model) handleFzfResult(msg fzfResultMsg) (tea.Model, tea.Cmd) {
 				m.applyFocus()
 				m.syncPreviewContent()
 				m.statusLine = ""
-				return m, tea.Batch(m.fetchDetailsForSelection(), m.fetchPromptForSelection())
+				return m, tea.Batch(m.fetchDetailsForSelection(), m.fetchPromptForSelection(), m.fetchConnectionForSelection())
 			}
 		}
 		for i, repo := range m.allRows {
@@ -279,7 +355,7 @@ func (m model) handleFzfResult(msg fzfResultMsg) (tea.Model, tea.Cmd) {
 				m.applyFocus()
 				m.syncPreviewContent()
 				m.statusLine = ""
-				return m, tea.Batch(m.fetchDetailsForSelection(), m.fetchPromptForSelection())
+				return m, tea.Batch(m.fetchDetailsForSelection(), m.fetchPromptForSelection(), m.fetchConnectionForSelection())
 			}
 		}
 		m.pivotTreesToRow(m.selectedRow(), true)
@@ -299,20 +375,20 @@ func (m model) updateTree(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	index := m.treeIndex[m.treeKind]
 	switch msg.String() {
-	case "up", "k":
+	case "up":
 		m.treeIndex[m.treeKind] = clamp(index-1, 0, len(items)-1)
 		m.activeTreeFilter[m.treeKind] = m.currentTreeSelectionPrefix(m.treeKind)
 		m.statusLine = ""
-		return m, tea.Batch(m.fetchRowsCmd(), m.fetchDetailsForSelection(), m.fetchPromptForSelection())
-	case "down", "j":
+		return m, tea.Batch(m.fetchRowsCmd(), m.fetchDetailsForSelection(), m.fetchPromptForSelection(), m.fetchConnectionForSelection())
+	case "down":
 		m.treeIndex[m.treeKind] = clamp(index+1, 0, len(items)-1)
 		m.activeTreeFilter[m.treeKind] = m.currentTreeSelectionPrefix(m.treeKind)
 		m.statusLine = ""
-		return m, tea.Batch(m.fetchRowsCmd(), m.fetchDetailsForSelection(), m.fetchPromptForSelection())
+		return m, tea.Batch(m.fetchRowsCmd(), m.fetchDetailsForSelection(), m.fetchPromptForSelection(), m.fetchConnectionForSelection())
 	case "enter":
 		m.activeTreeFilter[m.treeKind] = m.currentTreeSelectionPrefix(m.treeKind)
 		m.statusLine = ""
-		return m, tea.Batch(m.fetchRowsCmd(), m.fetchDetailsForSelection(), m.fetchPromptForSelection())
+		return m, tea.Batch(m.fetchRowsCmd(), m.fetchDetailsForSelection(), m.fetchPromptForSelection(), m.fetchConnectionForSelection())
 	case " ":
 		current := items[clamp(index, 0, len(items)-1)]
 		data := m.treeData[m.treeKind]
@@ -336,18 +412,18 @@ func (m model) updateRepos(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	switch msg.String() {
-	case "up", "k":
+	case "up":
 		m.setSelectedRepoIndex(clamp(m.repoIndex-1, 0, len(m.rows)-1))
 		m.pivotTreesToRow(m.selectedRow(), true)
 		m.syncPreviewContent()
 		m.statusLine = ""
-		return m, tea.Batch(m.fetchDetailsForSelection(), m.fetchPromptForSelection())
-	case "down", "j":
+		return m, tea.Batch(m.fetchDetailsForSelection(), m.fetchPromptForSelection(), m.fetchConnectionForSelection())
+	case "down":
 		m.setSelectedRepoIndex(clamp(m.repoIndex+1, 0, len(m.rows)-1))
 		m.pivotTreesToRow(m.selectedRow(), true)
 		m.syncPreviewContent()
 		m.statusLine = ""
-		return m, tea.Batch(m.fetchDetailsForSelection(), m.fetchPromptForSelection())
+		return m, tea.Batch(m.fetchDetailsForSelection(), m.fetchPromptForSelection(), m.fetchConnectionForSelection())
 	case "enter":
 		sel := m.selectedRow()
 		m.pivotTreesToRow(sel, true)

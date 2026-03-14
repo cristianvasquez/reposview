@@ -26,12 +26,32 @@ func (m model) openFzfFilterCmd() tea.Cmd {
 	kind := m.treeKind
 
 	items, prompt := m.fzfItemsForCurrentPane()
+	return runFzfCmd(items, prompt, focus, kind, false)
+}
+
+func (m model) openOSGRepoListCmd() tea.Cmd {
+	items, err := m.osgRepoListItems()
+	if err != nil {
+		return func() tea.Msg {
+			return fzfResultMsg{
+				focus:     focusRepos,
+				treeKind:  m.treeKind,
+				setFilter: true,
+				err:       err,
+			}
+		}
+	}
+	return runFzfCmd(items, "osg repos> ", focusRepos, m.treeKind, true)
+}
+
+func runFzfCmd(items []fzfItem, prompt string, focus focusPane, kind treeMode, setFilter bool) tea.Cmd {
 	if len(items) == 0 {
 		return func() tea.Msg {
 			return fzfResultMsg{
-				focus:    focus,
-				treeKind: kind,
-				err:      errors.New("nothing to filter in the current pane"),
+				focus:     focus,
+				treeKind:  kind,
+				setFilter: setFilter,
+				err:       errors.New("nothing to filter in the current pane"),
 			}
 		}
 	}
@@ -79,7 +99,7 @@ func (m model) openFzfFilterCmd() tea.Cmd {
 		defer os.Remove(inputPath)
 		defer os.Remove(outputPath)
 
-		msg := fzfResultMsg{focus: focus, treeKind: kind}
+		msg := fzfResultMsg{focus: focus, treeKind: kind, setFilter: setFilter}
 		if runErr != nil {
 			var exitErr *exec.ExitError
 			if errors.As(runErr, &exitErr) && exitErr.ExitCode() == 130 {
@@ -127,6 +147,36 @@ func (m model) fzfItemsForCurrentPane() ([]fzfItem, string) {
 	default:
 		return nil, ""
 	}
+}
+
+func (m model) osgRepoListItems() ([]fzfItem, error) {
+	repos, err := m.client.listConfiguredRepositories()
+	if err != nil {
+		return nil, err
+	}
+	return osgRepoItems(repos), nil
+}
+
+func osgRepoItems(repos []osgConfiguredRepository) []fzfItem {
+	items := make([]fzfItem, 0, len(repos))
+	seen := make(map[string]struct{}, len(repos))
+	for _, repo := range repos {
+		path := strings.TrimSpace(repo.Path)
+		if path == "" {
+			continue
+		}
+		if _, ok := seen[path]; ok {
+			continue
+		}
+		seen[path] = struct{}{}
+
+		label := path
+		if identity := strings.TrimSpace(repo.Identity); identity != "" {
+			label += "  {" + identity + "}"
+		}
+		items = append(items, fzfItem{ID: path, Label: label})
+	}
+	return items
 }
 
 func parseFzfOutput(path string) (string, string, error) {

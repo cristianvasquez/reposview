@@ -116,9 +116,11 @@ type keyMap struct {
 	Down      key.Binding
 	Apply     key.Binding
 	Filter    key.Binding
+	List      key.Binding
 	Refresh   key.Binding
 	Sync      key.Binding
-	Open      key.Binding
+	Terminal  key.Binding
+	Toggle    key.Binding
 	PathTree  key.Binding
 	IdentTree key.Binding
 	Cancel    key.Binding
@@ -127,16 +129,18 @@ type keyMap struct {
 
 func defaultKeys() keyMap {
 	return keyMap{
-		Left:      key.NewBinding(key.WithKeys("left", "h"), key.WithHelp("←/h", "left pane")),
-		Right:     key.NewBinding(key.WithKeys("right", "l"), key.WithHelp("→/l", "right pane")),
+		Left:      key.NewBinding(key.WithKeys("left"), key.WithHelp("←", "left pane")),
+		Right:     key.NewBinding(key.WithKeys("right"), key.WithHelp("→", "right pane")),
 		CycleTree: key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "cycle tree")),
-		Up:        key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("↑/k", "move")),
-		Down:      key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "move")),
+		Up:        key.NewBinding(key.WithKeys("up"), key.WithHelp("↑", "move")),
+		Down:      key.NewBinding(key.WithKeys("down"), key.WithHelp("↓", "move")),
 		Apply:     key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "apply/select")),
 		Filter:    key.NewBinding(key.WithKeys("f"), key.WithHelp("f", "filter pane")),
+		List:      key.NewBinding(key.WithKeys("l"), key.WithHelp("l", "list osg repos")),
 		Refresh:   key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "refresh")),
 		Sync:      key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "sync")),
-		Open:      key.NewBinding(key.WithKeys("o"), key.WithHelp("o", "open terminal")),
+		Terminal:  key.NewBinding(key.WithKeys("t"), key.WithHelp("t", "open terminal")),
+		Toggle:    key.NewBinding(key.WithKeys("o"), key.WithHelp("o", "toggle osg")),
 		PathTree:  key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "path tree")),
 		IdentTree: key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "identifier tree")),
 		Cancel:    key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "cancel/clear")),
@@ -145,13 +149,13 @@ func defaultKeys() keyMap {
 }
 
 func (k keyMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Left, k.Right, k.CycleTree, k.Up, k.Filter, k.Refresh, k.Sync, k.Quit}
+	return []key.Binding{k.Left, k.Right, k.CycleTree, k.Up, k.Filter, k.List, k.Toggle, k.Quit}
 }
 
 func (k keyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Left, k.Right, k.CycleTree, k.Up, k.Down, k.Filter},
-		{k.PathTree, k.IdentTree, k.Refresh, k.Sync, k.Open, k.Cancel, k.Quit},
+		{k.List, k.PathTree, k.IdentTree, k.Refresh, k.Sync, k.Terminal, k.Toggle, k.Cancel, k.Quit},
 	}
 }
 
@@ -176,6 +180,19 @@ type actionMsg struct {
 	err   error
 }
 
+type connectionStatus struct {
+	Path      string
+	Identity  string
+	Connected bool
+	Known     bool
+	Error     string
+}
+
+type connectionMsg struct {
+	state connectionStatus
+	label string
+}
+
 type promptMsg struct {
 	path   string
 	prompt string
@@ -187,6 +204,7 @@ type fzfResultMsg struct {
 	treeKind  treeMode
 	query     string
 	selection string
+	setFilter bool
 	cancelled bool
 	err       error
 }
@@ -225,6 +243,7 @@ type model struct {
 	lastStatus       syncStatus
 	lastRunAt        string
 	filterOriginal   string
+	connections      map[string]connectionStatus
 
 	statusLine string
 	promptLine string
@@ -269,8 +288,9 @@ func newModel(client *apiClient, initialPathFilter string) model {
 			treePath:       "",
 			treeIdentifier: "",
 		},
-		repoFilter: "",
-		statusLine: fmt.Sprintf("Connecting to %s", client.base),
-		loading:    true,
+		repoFilter:  "",
+		connections: map[string]connectionStatus{},
+		statusLine:  fmt.Sprintf("Connecting to %s", client.base),
+		loading:     true,
 	}
 }
